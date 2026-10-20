@@ -1,0 +1,20 @@
+# Windows thumbnail caches
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Visual Studio / .NET temp files & intermediate bin
+bin/
+**/bin/
+obj/
+**/obj/
+*.obj
+*.pdb
+*.user
+*.suo
+*.tmp
+*.log
+
+# Allow release directory with distribution packages
+!NetMonitor/release/

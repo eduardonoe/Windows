@@ -1,0 +1,21 @@
+﻿==============================================================================
+NetMonitor v1.0.4 - NetMonitor Portable
+Autor: Eduardo NoÃ© (eduardonoe)
+==============================================================================
+
+[PT-BR]
+Esta Ã© a versÃ£o portÃ¡til do NetMonitor.
+- NÃ£o requer instalaÃ§Ã£o.
+- Pode ser executado diretamente de qualquer pasta ou pendrive.
+- Para usar, basta dar um duplo clique em NetMonitor.exe.
+- Para configurar idioma, placa de rede ou inicializaÃ§Ã£o com o Windows, clique
+  com o botÃ£o direito sobre o widget na barra de tarefas.
+
+[EN]
+This is the portable version of NetMonitor.
+- No installation required.
+- Can be run directly from any folder or USB drive.
+- To use, simply double-click NetMonitor.exe.
+- To configure language, network adapter, or auto-start, right-click the
+  widget in the taskbar.
+==============================================================================
