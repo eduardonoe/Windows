@@ -62,7 +62,7 @@ Write-Host "Configurado para iniciar com o Windows (Boot)." -ForegroundColor Gre
 
 # 4. Iniciar o programa
 try {
-    Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "`"$targetExe`"" } | Out-Null
+    Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $targetExe } | Out-Null
 } catch {
     Start-Process -FilePath $targetExe
 }
