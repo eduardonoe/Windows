@@ -1,5 +1,5 @@
 ﻿==============================================================================
-NetMonitor v1.0.6 - NetMonitor Portable
+NetMonitor v1.0.0 - NetMonitor Portable
 Autor: Eduardo NoÃ© (eduardonoe)
 ==============================================================================
 

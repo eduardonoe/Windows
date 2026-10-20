@@ -1,8 +1,10 @@
 // ==============================================================================
 // NetMonitor - Monitor de Rede Ultraleve para Barra de Tarefas (Windows 11)
 // Autor: Eduardo Noé (eduardonoe)
-// Version: 1.0.6
+// Version: 1.0.0
 //
+// v1.0.0 changelog:
+// - Lançamento oficial v1.0.0 com interface completa e suporte multi-monitor.
 // v1.0.6 changelog:
 // - Tema Nativo do Windows 11 no Menu de Contexto (Modo Escuro / Claro automático).
 // - Correção de invasão do segundo monitor: submenus contidos estritamente na tela atual (abertura à esquerda).
@@ -952,7 +954,7 @@ namespace NetMonitor
             contextMenu.Items.Add(new ToolStripSeparator());
 
             // 8. About label
-            ToolStripMenuItem mnuAbout = new ToolStripMenuItem("NetMonitor v1.0.6 — Eduardo Noé");
+            ToolStripMenuItem mnuAbout = new ToolStripMenuItem("NetMonitor v1.0.0 — Eduardo Noé");
             mnuAbout.Enabled = false;
             contextMenu.Items.Add(mnuAbout);
 
@@ -1280,7 +1282,7 @@ namespace NetMonitor
     }
 
     // ==========================================================================
-    // JANELA MODERNA DE CONFIGURAÇÕES E PERSONALIZAÇÃO (v1.0.6)
+    // JANELA MODERNA DE CONFIGURAÇÕES E PERSONALIZAÇÃO (v1.0.0)
     // ==========================================================================
     public class SettingsForm : Form
     {
@@ -1401,7 +1403,7 @@ namespace NetMonitor
         {
             bool isPt = SelectedLanguage == "pt";
 
-            this.Text = isPt ? "Personalização do NetMonitor v1.0.6" : "NetMonitor Customization v1.0.6";
+            this.Text = isPt ? "Personalização do NetMonitor v1.0.0" : "NetMonitor Customization v1.0.0";
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.MinimizeBox = false;

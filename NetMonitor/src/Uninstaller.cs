@@ -1,7 +1,7 @@
 // ==============================================================================
 // NetMonitor Uninstaller (Bilingual: Portuguese & English)
 // Autor: Eduardo Noé (eduardonoe)
-// Version: 1.0.6
+// Version: 1.0.0
 // ==============================================================================
 
 using System;

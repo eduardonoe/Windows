@@ -1,9 +1,9 @@
 // ==============================================================================
 // NetMonitor Installer (Bilingual: Portuguese & English)
 // Autor: Eduardo Noé (eduardonoe)
-// Version: 1.0.6
+// Version: 1.0.0
 //
-// v1.0.3 changelog:
+// v1.0.0 changelog:
 // - Adiciona subpasta \NetMonitor automaticamente ao selecionar qualquer diretório.
 // - Suporte a instalação em C:\Program Files com auto-elevação de Administrador (UAC).
 // ==============================================================================
@@ -238,7 +238,7 @@ namespace NetMonitor
         {
             if (isPt)
             {
-                this.Text = "Instalação do NetMonitor v1.0.5";
+                this.Text = "Instalação do NetMonitor v1.0.0";
                 lblTitle.Text = "Instalação do NetMonitor";
                 lblDesc.Text = "Monitor de rede ultraleve para a barra de tarefas do Windows 11";
                 lblDest.Text = "Pasta de destino:";
@@ -252,7 +252,7 @@ namespace NetMonitor
             }
             else
             {
-                this.Text = "NetMonitor Setup v1.0.5";
+                this.Text = "NetMonitor Setup v1.0.0";
                 lblTitle.Text = "NetMonitor Setup";
                 lblDesc.Text = "Ultralight network monitor for Windows 11 taskbar";
                 lblDest.Text = "Destination folder:";
@@ -399,7 +399,7 @@ namespace NetMonitor
                     if (uninstKey != null)
                     {
                         uninstKey.SetValue("DisplayName", "NetMonitor");
-                        uninstKey.SetValue("DisplayVersion", "1.0.5");
+                        uninstKey.SetValue("DisplayVersion", "1.0.0");
                         uninstKey.SetValue("Publisher", "Eduardo Noé");
                         uninstKey.SetValue("InstallLocation", installDir);
                         uninstKey.SetValue("DisplayIcon", exePath + ",0");
@@ -429,8 +429,8 @@ namespace NetMonitor
 
                 string successTitle = isPt ? "Instalação Concluída" : "Setup Complete";
                 string successMsg = isPt
-                    ? "NetMonitor v1.0.5 foi instalado com sucesso!\nO aplicativo já está rodando na sua barra de tarefas."
-                    : "NetMonitor v1.0.5 has been successfully installed!\nThe application is now running in your taskbar.";
+                    ? "NetMonitor v1.0.0 foi instalado com sucesso!\nO aplicativo já está rodando na sua barra de tarefas."
+                    : "NetMonitor v1.0.0 has been successfully installed!\nThe application is now running in your taskbar.";
 
                 MessageBox.Show(successMsg, successTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
                 this.Close();

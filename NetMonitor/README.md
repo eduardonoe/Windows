@@ -1,10 +1,10 @@
-# NetMonitor v1.0.6
+# NetMonitor v1.0.0
 
 Monitor de tráfego de rede ultraleve para a barra de tarefas do **Windows 11**, desenvolvido para o ecossistema de **Eduardo Noé (`eduardonoe`)**.
 
 ---
 
-## ✨ Recursos Principais (v1.0.6)
+## ✨ Recursos Principais (v1.0.0)
 
 - **Tema Nativo do Windows 11 (Dark / Light):** Menus de contexto que respeitam o tema do sistema operacional, com renderização escura elegante (`#202020`), hover suave e checkmarks em azul fluente.
 - **Isolamento de Monitores (Multi-display Fix):** Submenus que nunca invadem a segunda tela em setups multi-monitor, expandindo sempre para a esquerda.
@@ -28,8 +28,8 @@ Monitor de tráfego de rede ultraleve para a barra de tarefas do **Windows 11**,
 ```text
 NetMonitor/
 ├── release/                           # 🌟 Pacotes finais para download e distribuição
-│   ├── NetMonitor-v1.0.6.zip          # Pacote completo (Instalador Oficial + Versão Portátil)
-│   ├── NetMonitor-Portable-v1.0.6.zip # Arquivo .zip avulso da versão portátil
+│   ├── NetMonitor-v1.0.0.zip          # Pacote completo (Instalador Oficial + Versão Portátil)
+│   ├── NetMonitor-Portable-v1.0.0.zip # Arquivo .zip avulso da versão portátil
 │   ├── NetMonitorSetup.exe            # Instalador oficial autocontido (com UAC e ícone)
 │   └── NetMonitor Portable/           # Pasta da versão portátil descompactada
 ├── bin/                               # Binários compilados da compilação interna
@@ -59,7 +59,7 @@ NetMonitor/
 
 ### 1. Pacote de Lançamento (Release):
 Na pasta [`release/`](file:///D:/_Antigravity/NetMonitor/release), você encontra:
-* **`NetMonitor-v1.0.6.zip`**: Pacote completo contendo tanto o Instalador quanto a Versão Portátil.
+* **`NetMonitor-v1.0.0.zip`**: Pacote completo contendo tanto o Instalador quanto a Versão Portátil.
 * **`NetMonitorSetup.exe`**: Instalador oficial para o Windows 11.
 * **`NetMonitor Portable`**: Versão que roda sem instalação direto de qualquer pasta ou pendrive.
 

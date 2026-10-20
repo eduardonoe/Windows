@@ -4,7 +4,7 @@ Todas as alterações notáveis deste projeto seguem o padrão de **Versionament
 
 ---
 
-## [1.0.6] - 2026-10-20
+## [1.0.0] - 2026-10-20
 
 ### Adicionado
 - **Tema Nativo do Windows 11 no Menu de Contexto (Modo Escuro / Claro Automático):**
@@ -30,7 +30,7 @@ Todas as alterações notáveis deste projeto seguem o padrão de **Versionament
 
 ---
 
-## [1.0.5] - 2026-10-20
+## [1.0.0] - 2026-10-20
 
 ### Adicionado
 - **Checkmarks Nítidos nos Menus (✓):**
@@ -54,7 +54,7 @@ Todas as alterações notáveis deste projeto seguem o padrão de **Versionament
 
 ---
 
-## [1.0.4] - 2026-10-20
+## [1.0.0] - 2026-10-20
 
 ### Alterado
 - **Tipografia Mais Fina:**
@@ -73,7 +73,7 @@ Todas as alterações notáveis deste projeto seguem o padrão de **Versionament
 
 ---
 
-## [1.0.3] - 2026-10-20
+## [1.0.0] - 2026-10-20
 
 ### Adicionado
 - Ícone oficial do aplicativo (`NetMonitor-Speed-02-Blue.ico` processado em multi-resolução de 16x16 até 256x256).
