@@ -4,6 +4,30 @@ Todas as alterações notáveis deste projeto seguem o padrão de **Versionament
 
 ---
 
+## [1.0.5] - 2026-10-20
+
+### Adicionado
+- **Checkmarks Nítidos nos Menus (✓):**
+  - Habilitado `ShowCheckMargin = true` no menu de contexto e em todos os submenus suspensos, garantindo que o usuário visualize com precisão quais opções estão ativas (adaptador de rede, idioma, inicialização, modo de unidade e trava de posição).
+- **Setas Posicionadas à Direita por Padrão:**
+  - Layout modernizado no formato `[ 823.6 Mbps ▲ ]`, trazendo maior legibilidade e alinhamento visual com a barra de tarefas do Windows 11.
+- **Seleção Fixa de Unidades de Medida:**
+  - Adicionado seletor de unidade com opções: **Automático**, **Kbps Fixo**, **Mbps Fixo** e **Gbps Fixo**, acessível pelo menu de contexto e pelo modal de configurações.
+- **Trava de Posição (Lock Position):**
+  - Opção no menu e configurações para travar o widget na barra de tarefas, prevenindo deslocamentos acidentais ao clicar ou arrastar com o mouse.
+- **Janela de Personalização e Configurações da UI:**
+  - Modal completo com:
+    - Alternância de layout (Setas à Direita vs Setas à Esquerda).
+    - Templates de ícones (Triângulos Sutis, Chevrons, Clássico, Sólidos).
+    - Campo de código Unicode / Mapa de Caracteres para Upload e Download (aceita tanto o caractere direto como códigos hexadecimais `U+25B2`, `0x25B2`, `25B2` ou `\u25b2`).
+    - Painel de pré-visualização ao vivo (*live preview*) das configurações antes de aplicar.
+
+### Corrigido
+- **Corte da letra 's' em "Mbps":**
+  - Ajustado o retângulo de renderização GDI+ da unidade (largura expandida de 35px para 38px) e alinhamento de texto com ClearType, eliminando o corte da última letra em conexões rápidas.
+
+---
+
 ## [1.0.4] - 2026-10-20
 
 ### Alterado
