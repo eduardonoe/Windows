@@ -1430,34 +1430,6 @@ namespace NetMonitor
             btnTabIcones.Click += (s, e) => SwitchTab(3);
 
             // ==================================================================
-            // PAINEL 1: GERAL
-            // ==================================================================
-            pnlGeral = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent };
-            BuildPanelGeral(pnlGeral, isPt);
-            this.Controls.Add(pnlGeral);
-
-            // ==================================================================
-            // PAINEL 2: TIPOGRAFIA
-            // ==================================================================
-            pnlFonte = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent, Visible = false };
-            BuildPanelFonte(pnlFonte, isPt);
-            this.Controls.Add(pnlFonte);
-
-            // ==================================================================
-            // PAINEL 3: CORES
-            // ==================================================================
-            pnlCores = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent, Visible = false };
-            BuildPanelCores(pnlCores, isPt);
-            this.Controls.Add(pnlCores);
-
-            // ==================================================================
-            // PAINEL 4: ÍCONES & UNICODE
-            // ==================================================================
-            pnlIcones = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent, Visible = false };
-            BuildPanelIcones(pnlIcones, isPt);
-            this.Controls.Add(pnlIcones);
-
-            // ==================================================================
             // ÁREA INFERIOR FIXA: LIVE PREVIEW & BOTÕES SALVAR / CANCELAR
             // ==================================================================
             GroupBox gbPreview = new GroupBox
@@ -1517,6 +1489,34 @@ namespace NetMonitor
             btnCancel.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
             btnCancel.Click += (s, e) => this.Close();
             this.Controls.Add(btnCancel);
+
+            // ==================================================================
+            // PAINEL 1: GERAL
+            // ==================================================================
+            pnlGeral = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent };
+            BuildPanelGeral(pnlGeral, isPt);
+            this.Controls.Add(pnlGeral);
+
+            // ==================================================================
+            // PAINEL 2: TIPOGRAFIA
+            // ==================================================================
+            pnlFonte = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent, Visible = false };
+            BuildPanelFonte(pnlFonte, isPt);
+            this.Controls.Add(pnlFonte);
+
+            // ==================================================================
+            // PAINEL 3: CORES
+            // ==================================================================
+            pnlCores = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent, Visible = false };
+            BuildPanelCores(pnlCores, isPt);
+            this.Controls.Add(pnlCores);
+
+            // ==================================================================
+            // PAINEL 4: ÍCONES & UNICODE
+            // ==================================================================
+            pnlIcones = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent, Visible = false };
+            BuildPanelIcones(pnlIcones, isPt);
+            this.Controls.Add(pnlIcones);
 
             SwitchTab(0);
         }
@@ -1908,6 +1908,14 @@ namespace NetMonitor
 
         private void UpdateColorControlsState()
         {
+            if (rbArrowUnified == null || btnColorArrowBoth == null ||
+                btnColorArrowUp == null || btnColorArrowDown == null ||
+                rbTextUnified == null || btnColorTextBoth == null ||
+                btnColorTextUp == null || btnColorTextDown == null)
+            {
+                return;
+            }
+
             bool arrowUni = rbArrowUnified.Checked;
             btnColorArrowBoth.Enabled = arrowUni;
             btnColorArrowUp.Enabled = !arrowUni;
@@ -1918,7 +1926,7 @@ namespace NetMonitor
             btnColorTextUp.Enabled = !textUni;
             btnColorTextDown.Enabled = !textUni;
 
-            pnlPreview.Invalidate();
+            if (pnlPreview != null) pnlPreview.Invalidate();
         }
 
         private void BuildPanelIcones(Panel pnl, bool isPt)
@@ -1991,6 +1999,15 @@ namespace NetMonitor
 
         private void RenderLivePreview(object sender, PaintEventArgs e)
         {
+            if (cbFontFamily == null || cbFontSize == null || cbFontStyle == null ||
+                rbRight == null || rbTextUnified == null || rbArrowUnified == null ||
+                btnColorTextBoth == null || btnColorTextUp == null || btnColorTextDown == null ||
+                btnColorArrowBoth == null || btnColorArrowUp == null || btnColorArrowDown == null ||
+                txtUp == null || txtDown == null || cbTemplate == null)
+            {
+                return;
+            }
+
             Graphics g = e.Graphics;
             g.Clear(Color.FromArgb(28, 28, 28));
             g.SmoothingMode = SmoothingMode.AntiAlias;
