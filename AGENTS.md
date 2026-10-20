@@ -90,3 +90,19 @@ Mensagens claras e objetivas em **Português**, com prefixos semânticos padroni
 - `blender-automation`: Execução e render via Blender 5.2 headless e UI.
 - `premiere-bridge`: Automação da timeline do Premiere.
 - `graphify`: Mapeamento de repositórios e dependências.
+
+---
+
+## ⚡ 5. Cadência de Resposta & Alinhamento Ágil (Padrão Claude)
+
+Para garantir máxima velocidade perceptível, alinhamento perfeito e evitar desperdício de tokens:
+
+1. **Síntese Imediata & Dúvidas Upfront:**
+   - Em novas demandas de implementação, UI/UX, refatoração ou resolução de problemas complexos:
+     - Sintetizar rapidamente em tópicos curtos o que foi compreendido.
+     - Destacar de imediato eventuais dúvidas, premissas ou caminhos de solução.
+     - **Aguardar a validação do usuário ("pode fazer", "é isso", etc.) ANTES de iniciar cadeias pesadas de raciocínio profundo, rodar scripts complexos de teste ou modificar arquivos.**
+2. **Execução Direta em Tarefas Operacionais:**
+   - Pedidos objetivos e diretos (ex: "faça o build", "publique", "leia o arquivo", "commite", "crie o arquivo X conforme combinamos") devem ser executados imediatamente sem confirmação prévia.
+3. **Comunicação Enxuta:**
+   - Tom direto, técnico e sem rodeios em português do Brasil.
