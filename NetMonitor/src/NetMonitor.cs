@@ -1,20 +1,15 @@
 // ==============================================================================
 // NetMonitor - Monitor de Rede Ultraleve para Barra de Tarefas (Windows 11)
 // Autor: Eduardo Noé (eduardonoe)
-// Version: 1.0.5
+// Version: 1.0.6
 //
-// v1.0.5 changelog:
-// - Checkmarks visíveis: habilitado ShowCheckMargin nos menus e submenus para
-//   exibição nítida dos tickets de seleção (✓).
-// - Setas posicionadas à direita por padrão: [ 823.6 Mbps ▲ ].
-// - Seleção fixa de unidades (Automático, Kbps, Mbps, Gbps).
-// - Correção definitiva da largura da unidade para nunca cortar a letra 's' em "Mbps".
-// - Opção de Travar Posição (Lock Position) para evitar arrasto acidental na barra.
-// - Janela visual completa de Configurações / Customização da UI:
-//     * Escolha da ordem (Setas à direita vs Setas à esquerda).
-//     * Templates prontos de ícones (Triângulos, Chevrons, Setas finas, etc.).
-//     * Campo para inserir qualquer caractere Unicode ou código Hex (ex: U+25B2).
-//     * Prévia ao vivo da aparência configurada.
+// v1.0.6 changelog:
+// - Tema Nativo do Windows 11 no Menu de Contexto (Modo Escuro / Claro automático).
+// - Correção de invasão do segundo monitor: submenus contidos estritamente na tela atual (abertura à esquerda).
+// - Correção do seletor recolhendo: timer Win32 pausado durante exibição das configurações.
+// - Seletor completo de Tipografia: Família de Fonte, Tamanho e Estilo (Regular, Bold, Italic).
+// - Sistema avançado de Cores: Cores unificadas ou individuais para Setas e Textos (Upload / Download).
+// - Nova interface moderna de Configurações com abas Dark (Geral, Tipografia, Ícones, Cores) e Live Preview fixo.
 // ==============================================================================
 
 using System;
@@ -102,10 +97,10 @@ namespace NetMonitor
         private const int WS_POPUP = unchecked((int)0x80000000);
 
         private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_SHOWWINDOW = 0x0040;
-        private const uint SWP_NOMOVE = 0x0002;
-        private const uint SWP_NOSIZE = 0x0001;
 
         private const string REG_KEY_APP = @"Software\NetMonitor";
         private const string REG_KEY_RUN = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -115,16 +110,27 @@ namespace NetMonitor
         private const int WIDGET_WIDTH = 106;
         private const int WIDGET_HEIGHT = 38;
 
-        // Visual Colors (Windows 11 Dark Taskbar Theme)
+        // Visual Colors (Windows 11 Dark Taskbar Theme default)
         private static readonly Color BG_COLOR = Color.FromArgb(28, 28, 28);
-        private static readonly Color ARROW_COLOR = Color.FromArgb(225, 225, 225);
-        private static readonly Color NUM_COLOR = Color.FromArgb(255, 255, 255);
-        private static readonly Color UNIT_COLOR = Color.FromArgb(195, 195, 195);
 
         // Fonts
+        private string fontFamily = "Segoe UI";
+        private float fontSize = 10.5f;
+        private FontStyle fontStyle = FontStyle.Regular;
         private Font fontNum;
         private Font fontUnit;
         private Font fontUnicode;
+
+        // Colors
+        private string arrowColorMode = "Unified";   // "Unified" ou "Individual"
+        private Color arrowColorUnified = Color.FromArgb(225, 225, 225);
+        private Color arrowColorUp = Color.FromArgb(225, 225, 225);
+        private Color arrowColorDown = Color.FromArgb(225, 225, 225);
+
+        private string textColorMode = "Unified";    // "Unified" ou "Individual"
+        private Color textColorUnified = Color.FromArgb(255, 255, 255);
+        private Color textColorUp = Color.FromArgb(255, 255, 255);
+        private Color textColorDown = Color.FromArgb(255, 255, 255);
 
         // Formatting alignment
         private StringFormat sfRight;
@@ -215,39 +221,89 @@ namespace NetMonitor
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
         }
 
-        private void SetupFonts()
+        public static string ColorToHex(Color c)
         {
-            string fontName = "Segoe UI";
-            using (Font test = new Font("Segoe UI Variable Display", 10f))
+            return string.Format("#{0:X2}{1:X2}{2:X2}", c.R, c.G, c.B);
+        }
+
+        public static Color HexToColor(string hex, Color defaultColor)
+        {
+            if (string.IsNullOrEmpty(hex)) return defaultColor;
+            try
             {
-                if (test.Name.IndexOf("Variable", StringComparison.OrdinalIgnoreCase) >= 0)
+                return ColorTranslator.FromHtml(hex);
+            }
+            catch
+            {
+                return defaultColor;
+            }
+        }
+
+        public static bool IsWindowsDarkTheme()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
                 {
-                    fontName = "Segoe UI Variable Display";
+                    if (key != null)
+                    {
+                        object sysLight = key.GetValue("SystemUsesLightTheme");
+                        if (sysLight != null) return Convert.ToInt32(sysLight) == 0;
+                        object appLight = key.GetValue("AppsUseLightTheme");
+                        if (appLight != null) return Convert.ToInt32(appLight) == 0;
+                    }
                 }
             }
+            catch { }
+            return true;
+        }
 
-            // Fonte regular mais fina
-            fontNum = new Font(fontName, 10.5f, FontStyle.Regular);
-            fontUnit = new Font(fontName, 9.0f, FontStyle.Regular);
-            fontUnicode = new Font("Segoe UI Symbol", 9.5f, FontStyle.Regular);
+        private void SetupFonts()
+        {
+            if (fontNum != null) fontNum.Dispose();
+            if (fontUnit != null) fontUnit.Dispose();
+            if (fontUnicode != null) fontUnicode.Dispose();
 
-            sfRight = new StringFormat
+            try
             {
-                Alignment = StringAlignment.Far,
-                LineAlignment = StringAlignment.Center
-            };
-
-            sfLeft = new StringFormat
+                fontNum = new Font(fontFamily, fontSize, fontStyle);
+            }
+            catch
             {
-                Alignment = StringAlignment.Near,
-                LineAlignment = StringAlignment.Center
-            };
+                fontNum = new Font("Segoe UI", 10.5f, FontStyle.Regular);
+            }
 
-            sfCenter = new StringFormat
+            try
             {
-                Alignment = StringAlignment.Center,
-                LineAlignment = StringAlignment.Center
-            };
+                float unitSize = Math.Max(7.0f, fontSize - 1.5f);
+                fontUnit = new Font(fontFamily, unitSize, FontStyle.Regular);
+            }
+            catch
+            {
+                fontUnit = new Font("Segoe UI", 9.0f, FontStyle.Regular);
+            }
+
+            float uniSize = Math.Max(8.0f, fontSize - 1.0f);
+            fontUnicode = new Font("Segoe UI Symbol", uniSize, FontStyle.Regular);
+
+            if (sfRight == null)
+            {
+                sfRight = new StringFormat
+                {
+                    Alignment = StringAlignment.Far,
+                    LineAlignment = StringAlignment.Center
+                };
+                sfLeft = new StringFormat
+                {
+                    Alignment = StringAlignment.Near,
+                    LineAlignment = StringAlignment.Center
+                };
+                sfCenter = new StringFormat
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Center
+                };
+            }
         }
 
         private void SetupTimer()
@@ -319,6 +375,27 @@ namespace NetMonitor
 
                         object valDown = key.GetValue("CustomDownChar");
                         if (valDown != null) customDownChar = valDown.ToString();
+
+                        object valFontF = key.GetValue("FontFamily");
+                        if (valFontF != null) fontFamily = valFontF.ToString();
+
+                        object valFontS = key.GetValue("FontSize");
+                        if (valFontS != null) float.TryParse(valFontS.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out fontSize);
+
+                        object valFontSt = key.GetValue("FontStyle");
+                        if (valFontSt != null) fontStyle = (FontStyle)Convert.ToInt32(valFontSt);
+
+                        object valAm = key.GetValue("ArrowColorMode");
+                        if (valAm != null) arrowColorMode = valAm.ToString();
+                        arrowColorUnified = HexToColor(key.GetValue("ArrowColorUnified") as string, Color.FromArgb(225, 225, 225));
+                        arrowColorUp = HexToColor(key.GetValue("ArrowColorUp") as string, Color.FromArgb(225, 225, 225));
+                        arrowColorDown = HexToColor(key.GetValue("ArrowColorDown") as string, Color.FromArgb(225, 225, 225));
+
+                        object valTm = key.GetValue("TextColorMode");
+                        if (valTm != null) textColorMode = valTm.ToString();
+                        textColorUnified = HexToColor(key.GetValue("TextColorUnified") as string, Color.FromArgb(255, 255, 255));
+                        textColorUp = HexToColor(key.GetValue("TextColorUp") as string, Color.FromArgb(255, 255, 255));
+                        textColorDown = HexToColor(key.GetValue("TextColorDown") as string, Color.FromArgb(255, 255, 255));
                     }
                 }
             }
@@ -343,6 +420,20 @@ namespace NetMonitor
                         key.SetValue("CustomDownChar", customDownChar);
                         key.SetValue("CustomX", this.Location.X);
                         key.SetValue("CustomY", this.Location.Y);
+
+                        key.SetValue("FontFamily", fontFamily);
+                        key.SetValue("FontSize", fontSize.ToString(CultureInfo.InvariantCulture));
+                        key.SetValue("FontStyle", (int)fontStyle);
+
+                        key.SetValue("ArrowColorMode", arrowColorMode);
+                        key.SetValue("ArrowColorUnified", ColorToHex(arrowColorUnified));
+                        key.SetValue("ArrowColorUp", ColorToHex(arrowColorUp));
+                        key.SetValue("ArrowColorDown", ColorToHex(arrowColorDown));
+
+                        key.SetValue("TextColorMode", textColorMode);
+                        key.SetValue("TextColorUnified", ColorToHex(textColorUnified));
+                        key.SetValue("TextColorUp", ColorToHex(textColorUp));
+                        key.SetValue("TextColorDown", ColorToHex(textColorDown));
                     }
                 }
             }
@@ -565,48 +656,43 @@ namespace NetMonitor
 
         private void FormatSpeed(double bitsPerSec, out string num, out string unit)
         {
-            if (string.Equals(unitMode, "Gbps", StringComparison.OrdinalIgnoreCase))
-            {
-                double gbps = bitsPerSec / (1000.0 * 1000.0 * 1000.0);
-                num = gbps.ToString("0.00", CultureInfo.InvariantCulture);
-                unit = "Gbps";
-            }
-            else if (string.Equals(unitMode, "Mbps", StringComparison.OrdinalIgnoreCase))
-            {
-                double mbps = bitsPerSec / (1000.0 * 1000.0);
-                num = mbps.ToString("0.0", CultureInfo.InvariantCulture);
-                unit = "Mbps";
-            }
-            else if (string.Equals(unitMode, "Kbps", StringComparison.OrdinalIgnoreCase))
+            if (unitMode == "Kbps")
             {
                 double kbps = bitsPerSec / 1000.0;
-                num = kbps.ToString("0", CultureInfo.InvariantCulture);
+                num = (kbps >= 100) ? kbps.ToString("F0") : kbps.ToString("F1");
                 unit = "Kbps";
             }
-            else // Auto
+            else if (unitMode == "Mbps")
             {
-                if (bitsPerSec >= 1000.0 * 1000.0 * 1000.0)
+                double mbps = bitsPerSec / 1000000.0;
+                num = (mbps >= 100) ? mbps.ToString("F0") : mbps.ToString("F1");
+                unit = "Mbps";
+            }
+            else if (unitMode == "Gbps")
+            {
+                double gbps = bitsPerSec / 1000000000.0;
+                num = (gbps >= 10) ? gbps.ToString("F1") : gbps.ToString("F2");
+                unit = "Gbps";
+            }
+            else
+            {
+                if (bitsPerSec >= 1000000000.0)
                 {
-                    double gbps = bitsPerSec / (1000.0 * 1000.0 * 1000.0);
-                    num = gbps.ToString("0.00", CultureInfo.InvariantCulture);
+                    double gbps = bitsPerSec / 1000000000.0;
+                    num = (gbps >= 10) ? gbps.ToString("F1") : gbps.ToString("F2");
                     unit = "Gbps";
                 }
-                else if (bitsPerSec >= 1000.0 * 1000.0)
+                else if (bitsPerSec >= 1000000.0)
                 {
-                    double mbps = bitsPerSec / (1000.0 * 1000.0);
-                    num = mbps.ToString("0.0", CultureInfo.InvariantCulture);
+                    double mbps = bitsPerSec / 1000000.0;
+                    num = (mbps >= 100) ? mbps.ToString("F0") : mbps.ToString("F1");
                     unit = "Mbps";
-                }
-                else if (bitsPerSec >= 1000.0)
-                {
-                    double kbps = bitsPerSec / 1000.0;
-                    num = kbps.ToString("0", CultureInfo.InvariantCulture);
-                    unit = "Kbps";
                 }
                 else
                 {
-                    num = "0.0";
-                    unit = "Mbps";
+                    double kbps = bitsPerSec / 1000.0;
+                    num = (kbps >= 100) ? kbps.ToString("F0") : kbps.ToString("F1");
+                    unit = "Kbps";
                 }
             }
         }
@@ -648,96 +734,106 @@ namespace NetMonitor
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
+            Color cTextUp = (textColorMode == "Individual") ? textColorUp : textColorUnified;
+            Color cTextDown = (textColorMode == "Individual") ? textColorDown : textColorUnified;
+
+            Color cArrowUp = (arrowColorMode == "Individual") ? arrowColorUp : arrowColorUnified;
+            Color cArrowDown = (arrowColorMode == "Individual") ? arrowColorDown : arrowColorUnified;
+
             if (arrowOnRight)
             {
                 // ==============================================================
                 // LAYOUT: SETAS À DIREITA -> [ 823.6 Mbps  ▲ ]
                 // ==============================================================
-                // 1. Números justificados à direita (X: 2 a 48)
                 RectangleF rUpNum = new RectangleF(2, 1, 46, 17);
                 RectangleF rDownNum = new RectangleF(2, 19, 46, 17);
 
-                using (Brush bNum = new SolidBrush(NUM_COLOR))
+                using (Brush bNumUp = new SolidBrush(cTextUp))
+                using (Brush bNumDown = new SolidBrush(cTextDown))
                 {
-                    g.DrawString(strUpNum, fontNum, bNum, rUpNum, sfRight);
-                    g.DrawString(strDownNum, fontNum, bNum, rDownNum, sfRight);
+                    g.DrawString(strUpNum, fontNum, bNumUp, rUpNum, sfRight);
+                    g.DrawString(strDownNum, fontNum, bNumDown, rDownNum, sfRight);
                 }
 
-                // 2. Unidade (X: 50 a 88 - espaço amplo para NUNCA cortar a letra 's')
                 RectangleF rUpUnit = new RectangleF(50, 1, 38, 17);
                 RectangleF rDownUnit = new RectangleF(50, 19, 38, 17);
 
-                using (Brush bUnit = new SolidBrush(UNIT_COLOR))
+                Color cUnitUp = Color.FromArgb((int)(cTextUp.R * 0.85f), (int)(cTextUp.G * 0.85f), (int)(cTextUp.B * 0.85f));
+                Color cUnitDown = Color.FromArgb((int)(cTextDown.R * 0.85f), (int)(cTextDown.G * 0.85f), (int)(cTextDown.B * 0.85f));
+
+                using (Brush bUnitUp = new SolidBrush(cUnitUp))
+                using (Brush bUnitDown = new SolidBrush(cUnitDown))
                 {
-                    g.DrawString(strUpUnit, fontUnit, bUnit, rUpUnit, sfLeft);
-                    g.DrawString(strDownUnit, fontUnit, bUnit, rDownUnit, sfLeft);
+                    g.DrawString(strUpUnit, fontUnit, bUnitUp, rUpUnit, sfLeft);
+                    g.DrawString(strDownUnit, fontUnit, bUnitDown, rDownUnit, sfLeft);
                 }
 
-                // 3. Setas à direita
-                DrawArrowIcon(g, 97.0f, true);
+                DrawArrowIcon(g, 97.0f, cArrowUp, cArrowDown);
             }
             else
             {
                 // ==============================================================
                 // LAYOUT: SETAS À ESQUERDA -> [ ▲  823.6 Mbps ]
                 // ==============================================================
-                // 1. Setas à esquerda
-                DrawArrowIcon(g, 10.0f, false);
+                DrawArrowIcon(g, 10.0f, cArrowUp, cArrowDown);
 
-                // 2. Números justificados à direita (X: 18 a 60)
                 RectangleF rUpNum = new RectangleF(18, 1, 42, 17);
                 RectangleF rDownNum = new RectangleF(18, 19, 42, 17);
 
-                using (Brush bNum = new SolidBrush(NUM_COLOR))
+                using (Brush bNumUp = new SolidBrush(cTextUp))
+                using (Brush bNumDown = new SolidBrush(cTextDown))
                 {
-                    g.DrawString(strUpNum, fontNum, bNum, rUpNum, sfRight);
-                    g.DrawString(strDownNum, fontNum, bNum, rDownNum, sfRight);
+                    g.DrawString(strUpNum, fontNum, bNumUp, rUpNum, sfRight);
+                    g.DrawString(strDownNum, fontNum, bNumDown, rDownNum, sfRight);
                 }
 
-                // 3. Unidade (X: 62 a 104)
                 RectangleF rUpUnit = new RectangleF(62, 1, 40, 17);
                 RectangleF rDownUnit = new RectangleF(62, 19, 40, 17);
 
-                using (Brush bUnit = new SolidBrush(UNIT_COLOR))
+                Color cUnitUp = Color.FromArgb((int)(cTextUp.R * 0.85f), (int)(cTextUp.G * 0.85f), (int)(cTextUp.B * 0.85f));
+                Color cUnitDown = Color.FromArgb((int)(cTextDown.R * 0.85f), (int)(cTextDown.G * 0.85f), (int)(cTextDown.B * 0.85f));
+
+                using (Brush bUnitUp = new SolidBrush(cUnitUp))
+                using (Brush bUnitDown = new SolidBrush(cUnitDown))
                 {
-                    g.DrawString(strUpUnit, fontUnit, bUnit, rUpUnit, sfLeft);
-                    g.DrawString(strDownUnit, fontUnit, bUnit, rDownUnit, sfLeft);
+                    g.DrawString(strUpUnit, fontUnit, bUnitUp, rUpUnit, sfLeft);
+                    g.DrawString(strDownUnit, fontUnit, bUnitDown, rDownUnit, sfLeft);
                 }
             }
         }
 
-        private void DrawArrowIcon(Graphics g, float centerX, bool isRight)
+        private void DrawArrowIcon(Graphics g, float centerX, Color colUp, Color colDown)
         {
-            using (Brush brushArrow = new SolidBrush(ARROW_COLOR))
+            using (Brush bUp = new SolidBrush(colUp))
+            using (Brush bDown = new SolidBrush(colDown))
             {
                 if (iconTemplate == "VectorTriangle")
                 {
-                    // Triângulos vetoriais refinados (+15%)
                     PointF[] upArrow = new PointF[] {
                         new PointF(centerX, 5.0f),
                         new PointF(centerX - 4.0f, 10.2f),
                         new PointF(centerX + 4.0f, 10.2f)
                     };
-                    g.FillPolygon(brushArrow, upArrow);
+                    g.FillPolygon(bUp, upArrow);
 
                     PointF[] downArrow = new PointF[] {
                         new PointF(centerX, 31.5f),
                         new PointF(centerX - 4.0f, 26.3f),
                         new PointF(centerX + 4.0f, 26.3f)
                     };
-                    g.FillPolygon(brushArrow, downArrow);
+                    g.FillPolygon(bDown, downArrow);
                 }
                 else if (iconTemplate == "VectorChevron")
                 {
-                    // Chevrons traço suave
-                    using (Pen penArrow = new Pen(ARROW_COLOR, 1.4f))
+                    using (Pen penUp = new Pen(colUp, 1.4f))
+                    using (Pen penDown = new Pen(colDown, 1.4f))
                     {
-                        g.DrawLines(penArrow, new PointF[] {
+                        g.DrawLines(penUp, new PointF[] {
                             new PointF(centerX - 3.8f, 9.5f),
                             new PointF(centerX, 5.5f),
                             new PointF(centerX + 3.8f, 9.5f)
                         });
-                        g.DrawLines(penArrow, new PointF[] {
+                        g.DrawLines(penDown, new PointF[] {
                             new PointF(centerX - 3.8f, 27.0f),
                             new PointF(centerX, 31.0f),
                             new PointF(centerX + 3.8f, 27.0f)
@@ -746,15 +842,14 @@ namespace NetMonitor
                 }
                 else
                 {
-                    // Caracteres Unicode customizados (ou mapa de caracteres)
                     string upCh = ParseUnicodeString(customUpChar, "▲");
                     string downCh = ParseUnicodeString(customDownChar, "▼");
 
                     RectangleF rUp = new RectangleF(centerX - 8, 1, 16, 17);
                     RectangleF rDown = new RectangleF(centerX - 8, 19, 16, 17);
 
-                    g.DrawString(upCh, fontUnicode, brushArrow, rUp, sfCenter);
-                    g.DrawString(downCh, fontUnicode, brushArrow, rDown, sfCenter);
+                    g.DrawString(upCh, fontUnicode, bUp, rUp, sfCenter);
+                    g.DrawString(downCh, fontUnicode, bDown, rDown, sfCenter);
                 }
             }
         }
@@ -762,8 +857,10 @@ namespace NetMonitor
         private void BuildContextMenu()
         {
             bool isPt = currentLanguage == "pt";
+            bool isDark = IsWindowsDarkTheme();
+
             contextMenu = new ContextMenuStrip();
-            // CHECKMARKS NÍTIDOS E VISÍVEIS
+            contextMenu.Renderer = new Windows11MenuRenderer(isDark);
             contextMenu.ShowCheckMargin = true;
             contextMenu.ShowImageMargin = false;
 
@@ -777,19 +874,19 @@ namespace NetMonitor
 
             // 1. Placa de Rede / Network Adapter
             ToolStripMenuItem mnuAdapters = new ToolStripMenuItem(isPt ? "Placa de Rede" : "Network Adapter");
-            EnableCheckMargin(mnuAdapters);
+            ConfigureSubmenu(mnuAdapters);
             PopulateAdaptersMenu(mnuAdapters);
             contextMenu.Items.Add(mnuAdapters);
 
             // 2. Unidade / Unit
             ToolStripMenuItem mnuUnits = new ToolStripMenuItem(isPt ? "Unidade" : "Unit");
-            EnableCheckMargin(mnuUnits);
+            ConfigureSubmenu(mnuUnits);
             PopulateUnitsMenu(mnuUnits);
             contextMenu.Items.Add(mnuUnits);
 
             // 3. Posição das Setas / Layout
             ToolStripMenuItem mnuLayout = new ToolStripMenuItem(isPt ? "Posição das Setas" : "Arrow Position");
-            EnableCheckMargin(mnuLayout);
+            ConfigureSubmenu(mnuLayout);
 
             ToolStripMenuItem itmRight = new ToolStripMenuItem(isPt ? "Setas à Direita (823 Mbps ▲)" : "Arrows on Right (823 Mbps ▲)");
             itmRight.Checked = arrowOnRight;
@@ -838,7 +935,7 @@ namespace NetMonitor
 
             // 7. Idioma / Language
             ToolStripMenuItem mnuLang = new ToolStripMenuItem(isPt ? "Idioma / Language" : "Language / Idioma");
-            EnableCheckMargin(mnuLang);
+            ConfigureSubmenu(mnuLang);
 
             ToolStripMenuItem itmPt = new ToolStripMenuItem("Português (Brasil)");
             itmPt.Checked = isPt;
@@ -855,7 +952,7 @@ namespace NetMonitor
             contextMenu.Items.Add(new ToolStripSeparator());
 
             // 8. About label
-            ToolStripMenuItem mnuAbout = new ToolStripMenuItem("NetMonitor v1.0.5 — Eduardo Noé");
+            ToolStripMenuItem mnuAbout = new ToolStripMenuItem("NetMonitor v1.0.6 — Eduardo Noé");
             mnuAbout.Enabled = false;
             contextMenu.Items.Add(mnuAbout);
 
@@ -871,14 +968,19 @@ namespace NetMonitor
             this.trayIcon.ContextMenuStrip = contextMenu;
         }
 
-        private static void EnableCheckMargin(ToolStripMenuItem item)
+        private void ConfigureSubmenu(ToolStripMenuItem item)
         {
             ToolStripDropDownMenu menu = item.DropDown as ToolStripDropDownMenu;
             if (menu != null)
             {
                 menu.ShowCheckMargin = true;
                 menu.ShowImageMargin = false;
+                menu.Renderer = contextMenu.Renderer;
             }
+
+            // Impede expansão para o segundo monitor:
+            // Submenus abrem obrigatoriamente para a ESQUERDA da barra direita.
+            item.DropDownDirection = ToolStripDropDownDirection.Left;
         }
 
         private void PopulateUnitsMenu(ToolStripMenuItem parent)
@@ -954,22 +1056,65 @@ namespace NetMonitor
 
         private void OpenSettingsDialog()
         {
-            using (SettingsForm sf = new SettingsForm(this, currentLanguage, unitMode, arrowOnRight, isLocked, iconTemplate, customUpChar, customDownChar))
+            // Pausa o timer para que SetWindowPos não cancele popups de combo
+            updateTimer.Stop();
+            try
             {
-                if (sf.ShowDialog() == DialogResult.OK)
+                using (SettingsForm sf = new SettingsForm(
+                    this,
+                    currentLanguage,
+                    unitMode,
+                    arrowOnRight,
+                    isLocked,
+                    iconTemplate,
+                    customUpChar,
+                    customDownChar,
+                    fontFamily,
+                    fontSize,
+                    fontStyle,
+                    arrowColorMode,
+                    arrowColorUnified,
+                    arrowColorUp,
+                    arrowColorDown,
+                    textColorMode,
+                    textColorUnified,
+                    textColorUp,
+                    textColorDown))
                 {
-                    currentLanguage = sf.SelectedLanguage;
-                    unitMode = sf.SelectedUnitMode;
-                    arrowOnRight = sf.SelectedArrowOnRight;
-                    isLocked = sf.SelectedIsLocked;
-                    iconTemplate = sf.SelectedIconTemplate;
-                    customUpChar = sf.SelectedCustomUpChar;
-                    customDownChar = sf.SelectedCustomDownChar;
+                    if (sf.ShowDialog() == DialogResult.OK)
+                    {
+                        currentLanguage = sf.SelectedLanguage;
+                        unitMode = sf.SelectedUnitMode;
+                        arrowOnRight = sf.SelectedArrowOnRight;
+                        isLocked = sf.SelectedIsLocked;
+                        iconTemplate = sf.SelectedIconTemplate;
+                        customUpChar = sf.SelectedCustomUpChar;
+                        customDownChar = sf.SelectedCustomDownChar;
 
-                    SaveSettings();
-                    BuildContextMenu();
-                    this.Invalidate();
+                        fontFamily = sf.SelectedFontFamily;
+                        fontSize = sf.SelectedFontSize;
+                        fontStyle = sf.SelectedFontStyle;
+
+                        arrowColorMode = sf.SelectedArrowColorMode;
+                        arrowColorUnified = sf.SelectedArrowColorUnified;
+                        arrowColorUp = sf.SelectedArrowColorUp;
+                        arrowColorDown = sf.SelectedArrowColorDown;
+
+                        textColorMode = sf.SelectedTextColorMode;
+                        textColorUnified = sf.SelectedTextColorUnified;
+                        textColorUp = sf.SelectedTextColorUp;
+                        textColorDown = sf.SelectedTextColorDown;
+
+                        SaveSettings();
+                        SetupFonts();
+                        BuildContextMenu();
+                        this.Invalidate();
+                    }
                 }
+            }
+            finally
+            {
+                updateTimer.Start();
             }
         }
 
@@ -1029,7 +1174,113 @@ namespace NetMonitor
     }
 
     // ==========================================================================
-    // JANELA DE CONFIGURAÇÕES E PERSONALIZAÇÃO (SETTINGS MODAL)
+    // RENDERIZADOR NATIVO DO WINDOWS 11 (TEMA ESCURO E CLARO)
+    // ==========================================================================
+    public class Windows11MenuRenderer : ToolStripProfessionalRenderer
+    {
+        private bool isDark;
+
+        public Windows11MenuRenderer(bool isDark) : base(new Windows11ColorTable(isDark))
+        {
+            this.isDark = isDark;
+        }
+
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            if (e.Item.Selected || e.Item.Pressed)
+            {
+                Rectangle rc = new Rectangle(2, 1, e.Item.Width - 4, e.Item.Height - 2);
+                Color hoverBg = isDark ? Color.FromArgb(50, 50, 50) : Color.FromArgb(230, 230, 230);
+                using (SolidBrush b = new SolidBrush(hoverBg))
+                {
+                    e.Graphics.FillRectangle(b, rc);
+                }
+            }
+            else
+            {
+                base.OnRenderMenuItemBackground(e);
+            }
+        }
+
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            if (isDark)
+            {
+                e.TextColor = e.Item.Enabled ? Color.FromArgb(240, 240, 240) : Color.FromArgb(120, 120, 120);
+            }
+            else
+            {
+                e.TextColor = e.Item.Enabled ? Color.FromArgb(30, 30, 30) : Color.FromArgb(140, 140, 140);
+            }
+            base.OnRenderItemText(e);
+        }
+
+        protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
+        {
+            Rectangle r = e.ImageRectangle;
+            r.Inflate(-2, -2);
+            Color boxBg = Color.FromArgb(0, 120, 212);
+            using (SolidBrush b = new SolidBrush(boxBg))
+            {
+                e.Graphics.FillRectangle(b, r);
+            }
+
+            using (Pen p = new Pen(Color.White, 1.8f))
+            {
+                PointF pt1 = new PointF(r.Left + 3f, r.Top + r.Height * 0.48f);
+                PointF pt2 = new PointF(r.Left + r.Width * 0.4f, r.Bottom - 3.5f);
+                PointF pt3 = new PointF(r.Right - 3f, r.Top + 3.5f);
+                e.Graphics.DrawLines(p, new PointF[] { pt1, pt2, pt3 });
+            }
+        }
+
+        protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
+        {
+            e.ArrowColor = isDark ? Color.FromArgb(190, 190, 190) : Color.FromArgb(80, 80, 80);
+            base.OnRenderArrow(e);
+        }
+
+        protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+        {
+            int midY = e.Item.Height / 2;
+            Color sepColor = isDark ? Color.FromArgb(55, 55, 55) : Color.FromArgb(220, 220, 220);
+            using (Pen p = new Pen(sepColor))
+            {
+                e.Graphics.DrawLine(p, 26, midY, e.Item.Width - 6, midY);
+            }
+        }
+    }
+
+    public class Windows11ColorTable : ProfessionalColorTable
+    {
+        private bool isDark;
+
+        public Windows11ColorTable(bool isDark)
+        {
+            this.isDark = isDark;
+            this.UseSystemColors = false;
+        }
+
+        public override Color ToolStripDropDownBackground { get { return isDark ? Color.FromArgb(32, 32, 32) : Color.FromArgb(250, 250, 250); } }
+        public override Color MenuBorder { get { return isDark ? Color.FromArgb(55, 55, 55) : Color.FromArgb(215, 215, 215); } }
+        public override Color MenuItemBorder { get { return Color.Transparent; } }
+        public override Color MenuItemSelected { get { return isDark ? Color.FromArgb(50, 50, 50) : Color.FromArgb(235, 235, 235); } }
+        public override Color MenuItemSelectedGradientBegin { get { return isDark ? Color.FromArgb(50, 50, 50) : Color.FromArgb(235, 235, 235); } }
+        public override Color MenuItemSelectedGradientEnd { get { return isDark ? Color.FromArgb(50, 50, 50) : Color.FromArgb(235, 235, 235); } }
+        public override Color MenuItemPressedGradientBegin { get { return isDark ? Color.FromArgb(40, 40, 40) : Color.FromArgb(225, 225, 225); } }
+        public override Color MenuItemPressedGradientEnd { get { return isDark ? Color.FromArgb(40, 40, 40) : Color.FromArgb(225, 225, 225); } }
+        public override Color ImageMarginGradientBegin { get { return isDark ? Color.FromArgb(32, 32, 32) : Color.FromArgb(250, 250, 250); } }
+        public override Color ImageMarginGradientMiddle { get { return isDark ? Color.FromArgb(32, 32, 32) : Color.FromArgb(250, 250, 250); } }
+        public override Color ImageMarginGradientEnd { get { return isDark ? Color.FromArgb(32, 32, 32) : Color.FromArgb(250, 250, 250); } }
+        public override Color CheckBackground { get { return Color.Transparent; } }
+        public override Color CheckSelectedBackground { get { return Color.Transparent; } }
+        public override Color CheckPressedBackground { get { return Color.Transparent; } }
+        public override Color SeparatorDark { get { return isDark ? Color.FromArgb(55, 55, 55) : Color.FromArgb(220, 220, 220); } }
+        public override Color SeparatorLight { get { return Color.Transparent; } }
+    }
+
+    // ==========================================================================
+    // JANELA MODERNA DE CONFIGURAÇÕES E PERSONALIZAÇÃO (v1.0.6)
     // ==========================================================================
     public class SettingsForm : Form
     {
@@ -1041,18 +1292,84 @@ namespace NetMonitor
         public string SelectedCustomUpChar { get; private set; }
         public string SelectedCustomDownChar { get; private set; }
 
+        public string SelectedFontFamily { get; private set; }
+        public float SelectedFontSize { get; private set; }
+        public FontStyle SelectedFontStyle { get; private set; }
+
+        public string SelectedArrowColorMode { get; private set; }
+        public Color SelectedArrowColorUnified { get; private set; }
+        public Color SelectedArrowColorUp { get; private set; }
+        public Color SelectedArrowColorDown { get; private set; }
+
+        public string SelectedTextColorMode { get; private set; }
+        public Color SelectedTextColorUnified { get; private set; }
+        public Color SelectedTextColorUp { get; private set; }
+        public Color SelectedTextColorDown { get; private set; }
+
+        // Abas
+        private Button btnTabGeral;
+        private Button btnTabFonte;
+        private Button btnTabCores;
+        private Button btnTabIcones;
+
+        private Panel pnlGeral;
+        private Panel pnlFonte;
+        private Panel pnlCores;
+        private Panel pnlIcones;
+
+        // Geral
         private ComboBox cbLang;
         private ComboBox cbUnits;
         private RadioButton rbRight;
         private RadioButton rbLeft;
         private CheckBox chkLock;
+
+        // Fonte
+        private ComboBox cbFontFamily;
+        private ComboBox cbFontSize;
+        private ComboBox cbFontStyle;
+
+        // Cores
+        private RadioButton rbArrowUnified;
+        private RadioButton rbArrowIndividual;
+        private Button btnColorArrowBoth;
+        private Button btnColorArrowUp;
+        private Button btnColorArrowDown;
+
+        private RadioButton rbTextUnified;
+        private RadioButton rbTextIndividual;
+        private Button btnColorTextBoth;
+        private Button btnColorTextUp;
+        private Button btnColorTextDown;
+
+        // Ícones
         private ComboBox cbTemplate;
         private TextBox txtUp;
         private TextBox txtDown;
-        private Label lblPreview;
+
+        // Prévia
         private Panel pnlPreview;
 
-        public SettingsForm(Form parent, string lang, string unit, bool arrowRight, bool locked, string tpl, string upChar, string downChar)
+        public SettingsForm(
+            Form parent,
+            string lang,
+            string unit,
+            bool arrowRight,
+            bool locked,
+            string tpl,
+            string upChar,
+            string downChar,
+            string fontFam,
+            float fontSz,
+            FontStyle fontSt,
+            string arrColMode,
+            Color arrColUni,
+            Color arrColUp,
+            Color arrColDn,
+            string txtColMode,
+            Color txtColUni,
+            Color txtColUp,
+            Color txtColDn)
         {
             this.SelectedLanguage = lang;
             this.SelectedUnitMode = unit;
@@ -1062,6 +1379,20 @@ namespace NetMonitor
             this.SelectedCustomUpChar = upChar;
             this.SelectedCustomDownChar = downChar;
 
+            this.SelectedFontFamily = fontFam;
+            this.SelectedFontSize = fontSz;
+            this.SelectedFontStyle = fontSt;
+
+            this.SelectedArrowColorMode = arrColMode;
+            this.SelectedArrowColorUnified = arrColUni;
+            this.SelectedArrowColorUp = arrColUp;
+            this.SelectedArrowColorDown = arrColDn;
+
+            this.SelectedTextColorMode = txtColMode;
+            this.SelectedTextColorUnified = txtColUni;
+            this.SelectedTextColorUp = txtColUp;
+            this.SelectedTextColorDown = txtColDn;
+
             InitializeUI();
             try { this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         }
@@ -1070,33 +1401,174 @@ namespace NetMonitor
         {
             bool isPt = SelectedLanguage == "pt";
 
-            this.Text = isPt ? "Personalização do NetMonitor" : "NetMonitor Customization";
+            this.Text = isPt ? "Personalização do NetMonitor v1.0.6" : "NetMonitor Customization v1.0.6";
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.MinimizeBox = false;
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.ClientSize = new Size(500, 480);
+            this.ClientSize = new Size(540, 520);
             this.BackColor = Color.FromArgb(30, 30, 30);
             this.ForeColor = Color.White;
             this.Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
 
-            int curY = 16;
+            // ==================================================================
+            // BOTÕES DE NAVEGAÇÃO DE ABAS
+            // ==================================================================
+            btnTabGeral = CreateTabButton(isPt ? "Geral" : "General", 15);
+            btnTabFonte = CreateTabButton(isPt ? "Tipografia" : "Typography", 140);
+            btnTabCores = CreateTabButton(isPt ? "Cores" : "Colors", 265);
+            btnTabIcones = CreateTabButton(isPt ? "Ícones & Unicode" : "Icons & Unicode", 390);
 
-            // 1. Idioma / Language
-            Label lblL = new Label { Text = isPt ? "Idioma / Language:" : "Language / Idioma:", Location = new Point(20, curY), AutoSize = true };
-            this.Controls.Add(lblL);
-            cbLang = new ComboBox { Location = new Point(200, curY - 3), Width = 180, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White };
+            this.Controls.Add(btnTabGeral);
+            this.Controls.Add(btnTabFonte);
+            this.Controls.Add(btnTabCores);
+            this.Controls.Add(btnTabIcones);
+
+            btnTabGeral.Click += (s, e) => SwitchTab(0);
+            btnTabFonte.Click += (s, e) => SwitchTab(1);
+            btnTabCores.Click += (s, e) => SwitchTab(2);
+            btnTabIcones.Click += (s, e) => SwitchTab(3);
+
+            // ==================================================================
+            // PAINEL 1: GERAL
+            // ==================================================================
+            pnlGeral = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent };
+            BuildPanelGeral(pnlGeral, isPt);
+            this.Controls.Add(pnlGeral);
+
+            // ==================================================================
+            // PAINEL 2: TIPOGRAFIA
+            // ==================================================================
+            pnlFonte = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent, Visible = false };
+            BuildPanelFonte(pnlFonte, isPt);
+            this.Controls.Add(pnlFonte);
+
+            // ==================================================================
+            // PAINEL 3: CORES
+            // ==================================================================
+            pnlCores = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent, Visible = false };
+            BuildPanelCores(pnlCores, isPt);
+            this.Controls.Add(pnlCores);
+
+            // ==================================================================
+            // PAINEL 4: ÍCONES & UNICODE
+            // ==================================================================
+            pnlIcones = new Panel { Location = new Point(15, 55), Size = new Size(510, 290), BackColor = Color.Transparent, Visible = false };
+            BuildPanelIcones(pnlIcones, isPt);
+            this.Controls.Add(pnlIcones);
+
+            // ==================================================================
+            // ÁREA INFERIOR FIXA: LIVE PREVIEW & BOTÕES SALVAR / CANCELAR
+            // ==================================================================
+            GroupBox gbPreview = new GroupBox
+            {
+                Text = isPt ? "Pré-visualização em Tempo Real (Live Preview)" : "Real-Time Live Preview",
+                Location = new Point(15, 355),
+                Size = new Size(510, 95),
+                ForeColor = Color.FromArgb(200, 200, 200)
+            };
+            this.Controls.Add(gbPreview);
+
+            pnlPreview = new Panel
+            {
+                Location = new Point(20, 28),
+                Size = new Size(120, 48),
+                BackColor = Color.FromArgb(28, 28, 28),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            pnlPreview.Paint += RenderLivePreview;
+            gbPreview.Controls.Add(pnlPreview);
+
+            Label lblPreviewHint = new Label
+            {
+                Text = isPt ? "Atualiza dinamicamente com todas as fontes, cores, ícones e layout escolhidos." : "Dynamically reflects chosen fonts, colors, icons and layout.",
+                Location = new Point(155, 36),
+                Size = new Size(340, 36),
+                ForeColor = Color.FromArgb(170, 170, 170),
+                Font = new Font(this.Font.FontFamily, 8.5f)
+            };
+            gbPreview.Controls.Add(lblPreviewHint);
+
+            Button btnSave = new Button
+            {
+                Text = isPt ? "Salvar" : "Save",
+                Location = new Point(315, 465),
+                Size = new Size(100, 34),
+                BackColor = Color.FromArgb(0, 120, 212),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font(this.Font, FontStyle.Bold),
+                DialogResult = DialogResult.OK
+            };
+            btnSave.FlatAppearance.BorderSize = 0;
+            btnSave.Click += (s, e) => ApplyAndClose();
+            this.Controls.Add(btnSave);
+
+            Button btnCancel = new Button
+            {
+                Text = isPt ? "Cancelar" : "Cancel",
+                Location = new Point(425, 465),
+                Size = new Size(100, 34),
+                BackColor = Color.FromArgb(50, 50, 50),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                DialogResult = DialogResult.Cancel
+            };
+            btnCancel.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
+            btnCancel.Click += (s, e) => this.Close();
+            this.Controls.Add(btnCancel);
+
+            SwitchTab(0);
+        }
+
+        private Button CreateTabButton(string text, int x)
+        {
+            Button btn = new Button
+            {
+                Text = text,
+                Location = new Point(x, 14),
+                Size = new Size(120, 32),
+                BackColor = Color.FromArgb(45, 45, 45),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9f, FontStyle.Regular)
+            };
+            btn.FlatAppearance.BorderSize = 0;
+            return btn;
+        }
+
+        private void SwitchTab(int tabIndex)
+        {
+            btnTabGeral.BackColor = (tabIndex == 0) ? Color.FromArgb(0, 120, 212) : Color.FromArgb(45, 45, 45);
+            btnTabFonte.BackColor = (tabIndex == 1) ? Color.FromArgb(0, 120, 212) : Color.FromArgb(45, 45, 45);
+            btnTabCores.BackColor = (tabIndex == 2) ? Color.FromArgb(0, 120, 212) : Color.FromArgb(45, 45, 45);
+            btnTabIcones.BackColor = (tabIndex == 3) ? Color.FromArgb(0, 120, 212) : Color.FromArgb(45, 45, 45);
+
+            pnlGeral.Visible = (tabIndex == 0);
+            pnlFonte.Visible = (tabIndex == 1);
+            pnlCores.Visible = (tabIndex == 2);
+            pnlIcones.Visible = (tabIndex == 3);
+        }
+
+        private void BuildPanelGeral(Panel pnl, bool isPt)
+        {
+            int y = 10;
+
+            // Idioma
+            Label lblL = new Label { Text = isPt ? "Idioma / Language:" : "Language / Idioma:", Location = new Point(10, y + 3), AutoSize = true };
+            pnl.Controls.Add(lblL);
+            cbLang = new ComboBox { Location = new Point(200, y), Width = 280, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White };
             cbLang.Items.Add("Português (Brasil)");
             cbLang.Items.Add("English");
-            cbLang.SelectedIndex = isPt ? 0 : 1;
-            this.Controls.Add(cbLang);
+            cbLang.SelectedIndex = (SelectedLanguage == "pt") ? 0 : 1;
+            pnl.Controls.Add(cbLang);
 
-            curY += 36;
+            y += 40;
 
-            // 2. Unidade / Unit Mode
-            Label lblU = new Label { Text = isPt ? "Unidade de Velocidade:" : "Speed Unit:", Location = new Point(20, curY), AutoSize = true };
-            this.Controls.Add(lblU);
-            cbUnits = new ComboBox { Location = new Point(200, curY - 3), Width = 180, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White };
+            // Unidade
+            Label lblU = new Label { Text = isPt ? "Unidade de Velocidade:" : "Speed Unit:", Location = new Point(10, y + 3), AutoSize = true };
+            pnl.Controls.Add(lblU);
+            cbUnits = new ComboBox { Location = new Point(200, y), Width = 280, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White };
             cbUnits.Items.Add(isPt ? "Automático (Kbps / Mbps / Gbps)" : "Automatic (Kbps / Mbps / Gbps)");
             cbUnits.Items.Add("Sempre em Kbps / Always Kbps");
             cbUnits.Items.Add("Sempre em Mbps / Always Mbps");
@@ -1105,24 +1577,25 @@ namespace NetMonitor
             else if (SelectedUnitMode == "Mbps") cbUnits.SelectedIndex = 2;
             else if (SelectedUnitMode == "Gbps") cbUnits.SelectedIndex = 3;
             else cbUnits.SelectedIndex = 0;
-            this.Controls.Add(cbUnits);
+            cbUnits.SelectedIndexChanged += (s, e) => pnlPreview.Invalidate();
+            pnl.Controls.Add(cbUnits);
 
-            curY += 40;
+            y += 45;
 
-            // 3. Ordem das Setas (Posicionamento)
+            // Posição das Setas
             GroupBox gbLayout = new GroupBox
             {
-                Text = isPt ? "Posição das Setas na Interface" : "Arrow Position in Interface",
-                Location = new Point(20, curY),
-                Size = new Size(460, 75),
+                Text = isPt ? "Posição das Setas na Interface" : "Arrow Position",
+                Location = new Point(10, y),
+                Size = new Size(490, 85),
                 ForeColor = Color.FromArgb(200, 200, 200)
             };
-            this.Controls.Add(gbLayout);
+            pnl.Controls.Add(gbLayout);
 
             rbRight = new RadioButton
             {
                 Text = isPt ? "Setas à Direita: [ 823.6 Mbps ▲ ] (Recomendado)" : "Arrows on Right: [ 823.6 Mbps ▲ ] (Recommended)",
-                Location = new Point(15, 22),
+                Location = new Point(15, 24),
                 AutoSize = true,
                 Checked = SelectedArrowOnRight,
                 ForeColor = Color.White
@@ -1130,33 +1603,335 @@ namespace NetMonitor
             rbLeft = new RadioButton
             {
                 Text = isPt ? "Setas à Esquerda: [ ▲ 823.6 Mbps ]" : "Arrows on Left: [ ▲ 823.6 Mbps ]",
-                Location = new Point(15, 46),
+                Location = new Point(15, 52),
                 AutoSize = true,
                 Checked = !SelectedArrowOnRight,
                 ForeColor = Color.White
             };
+            rbRight.CheckedChanged += (s, e) => pnlPreview.Invalidate();
+            rbLeft.CheckedChanged += (s, e) => pnlPreview.Invalidate();
             gbLayout.Controls.Add(rbRight);
             gbLayout.Controls.Add(rbLeft);
 
-            curY += 85;
+            y += 100;
 
-            // 4. Customização de Ícones / Setas / Unicode
-            GroupBox gbIcons = new GroupBox
+            // Travar Posição
+            chkLock = new CheckBox
             {
-                Text = isPt ? "Ícones das Setas & Caracteres Unicode" : "Arrow Icons & Unicode Characters",
-                Location = new Point(20, curY),
-                Size = new Size(460, 140),
+                Text = isPt ? "Travar posição na barra de tarefas (bloqueia arrasto acidental)" : "Lock position on taskbar (prevents accidental drag)",
+                Location = new Point(10, y),
+                AutoSize = true,
+                Checked = SelectedIsLocked,
+                ForeColor = Color.FromArgb(230, 230, 230)
+            };
+            pnl.Controls.Add(chkLock);
+        }
+
+        private void BuildPanelFonte(Panel pnl, bool isPt)
+        {
+            int y = 15;
+
+            // Família
+            Label lblFam = new Label { Text = isPt ? "Família da Fonte:" : "Font Family:", Location = new Point(10, y + 3), AutoSize = true };
+            pnl.Controls.Add(lblFam);
+
+            cbFontFamily = new ComboBox { Location = new Point(190, y), Width = 290, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White };
+            cbFontFamily.Items.Add("Segoe UI Variable Display");
+            cbFontFamily.Items.Add("Segoe UI");
+            cbFontFamily.Items.Add("Cascadia Code");
+            cbFontFamily.Items.Add("Consolas");
+            cbFontFamily.Items.Add("Arial");
+            cbFontFamily.Items.Add("Bahnschrift");
+            cbFontFamily.Items.Add("Calibri");
+            cbFontFamily.Items.Add("Trebuchet MS");
+            cbFontFamily.Items.Add("Verdana");
+
+            int idxFam = 1;
+            for (int i = 0; i < cbFontFamily.Items.Count; i++)
+            {
+                if (string.Equals(cbFontFamily.Items[i].ToString(), SelectedFontFamily, StringComparison.OrdinalIgnoreCase))
+                {
+                    idxFam = i;
+                    break;
+                }
+            }
+            cbFontFamily.SelectedIndex = idxFam;
+            cbFontFamily.SelectedIndexChanged += (s, e) => pnlPreview.Invalidate();
+            pnl.Controls.Add(cbFontFamily);
+
+            y += 45;
+
+            // Tamanho
+            Label lblSz = new Label { Text = isPt ? "Tamanho da Fonte:" : "Font Size:", Location = new Point(10, y + 3), AutoSize = true };
+            pnl.Controls.Add(lblSz);
+
+            cbFontSize = new ComboBox { Location = new Point(190, y), Width = 290, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White };
+            cbFontSize.Items.Add("8.5 pt");
+            cbFontSize.Items.Add("9.0 pt");
+            cbFontSize.Items.Add("9.5 pt");
+            cbFontSize.Items.Add("10.0 pt");
+            cbFontSize.Items.Add("10.5 pt (Padrão)");
+            cbFontSize.Items.Add("11.0 pt");
+            cbFontSize.Items.Add("11.5 pt");
+            cbFontSize.Items.Add("12.0 pt");
+
+            if (Math.Abs(SelectedFontSize - 8.5f) < 0.1) cbFontSize.SelectedIndex = 0;
+            else if (Math.Abs(SelectedFontSize - 9.0f) < 0.1) cbFontSize.SelectedIndex = 1;
+            else if (Math.Abs(SelectedFontSize - 9.5f) < 0.1) cbFontSize.SelectedIndex = 2;
+            else if (Math.Abs(SelectedFontSize - 10.0f) < 0.1) cbFontSize.SelectedIndex = 3;
+            else if (Math.Abs(SelectedFontSize - 11.0f) < 0.1) cbFontSize.SelectedIndex = 5;
+            else if (Math.Abs(SelectedFontSize - 11.5f) < 0.1) cbFontSize.SelectedIndex = 6;
+            else if (Math.Abs(SelectedFontSize - 12.0f) < 0.1) cbFontSize.SelectedIndex = 7;
+            else cbFontSize.SelectedIndex = 4; // 10.5pt
+            cbFontSize.SelectedIndexChanged += (s, e) => pnlPreview.Invalidate();
+            pnl.Controls.Add(cbFontSize);
+
+            y += 45;
+
+            // Estilo
+            Label lblSt = new Label { Text = isPt ? "Estilo da Fonte:" : "Font Style:", Location = new Point(10, y + 3), AutoSize = true };
+            pnl.Controls.Add(lblSt);
+
+            cbFontStyle = new ComboBox { Location = new Point(190, y), Width = 290, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White };
+            cbFontStyle.Items.Add(isPt ? "Regular (Normal)" : "Regular");
+            cbFontStyle.Items.Add(isPt ? "Negrito (Bold)" : "Bold");
+            cbFontStyle.Items.Add(isPt ? "Itálico (Italic)" : "Italic");
+
+            if (SelectedFontStyle == FontStyle.Bold) cbFontStyle.SelectedIndex = 1;
+            else if (SelectedFontStyle == FontStyle.Italic) cbFontStyle.SelectedIndex = 2;
+            else cbFontStyle.SelectedIndex = 0;
+            cbFontStyle.SelectedIndexChanged += (s, e) => pnlPreview.Invalidate();
+            pnl.Controls.Add(cbFontStyle);
+
+            y += 55;
+
+            Label lblTip = new Label
+            {
+                Text = isPt ? "Dica: A fonte dos números adapta a unidade proporcionalmente mantendo a legibilidade na barra de tarefas." : "Tip: The font size automatically scales units while preserving taskbar legibility.",
+                Location = new Point(10, y),
+                Size = new Size(480, 50),
+                ForeColor = Color.FromArgb(160, 160, 160),
+                Font = new Font(this.Font.FontFamily, 8.5f)
+            };
+            pnl.Controls.Add(lblTip);
+        }
+
+        private void BuildPanelCores(Panel pnl, bool isPt)
+        {
+            int y = 5;
+
+            // Grupo Cores das Setas
+            GroupBox gbArrowCol = new GroupBox
+            {
+                Text = isPt ? "Cores das Setas" : "Arrow Colors",
+                Location = new Point(10, y),
+                Size = new Size(490, 110),
                 ForeColor = Color.FromArgb(200, 200, 200)
             };
-            this.Controls.Add(gbIcons);
+            pnl.Controls.Add(gbArrowCol);
 
-            Label lblTpl = new Label { Text = isPt ? "Modelo Pré-definido:" : "Preset Template:", Location = new Point(15, 24), AutoSize = true, ForeColor = Color.White };
-            gbIcons.Controls.Add(lblTpl);
+            rbArrowUnified = new RadioButton { Text = isPt ? "Cor Única para Ambas:" : "Unified Color:", Location = new Point(15, 22), AutoSize = true, Checked = (SelectedArrowColorMode != "Individual"), ForeColor = Color.White };
+            rbArrowIndividual = new RadioButton { Text = isPt ? "Individuais (Upload / Download):" : "Individual (Up / Down):", Location = new Point(15, 62), AutoSize = true, Checked = (SelectedArrowColorMode == "Individual"), ForeColor = Color.White };
+
+            btnColorArrowBoth = CreateColorSwatchButton(SelectedArrowColorUnified, 270, 20);
+            btnColorArrowUp = CreateColorSwatchButton(SelectedArrowColorUp, 270, 60);
+            btnColorArrowDown = CreateColorSwatchButton(SelectedArrowColorDown, 360, 60);
+
+            Label lblArrUp = new Label { Text = "Up", Location = new Point(245, 65), AutoSize = true, ForeColor = Color.FromArgb(180, 180, 180) };
+            Label lblArrDn = new Label { Text = "Down", Location = new Point(320, 65), AutoSize = true, ForeColor = Color.FromArgb(180, 180, 180) };
+
+            gbArrowCol.Controls.Add(rbArrowUnified);
+            gbArrowCol.Controls.Add(rbArrowIndividual);
+            gbArrowCol.Controls.Add(btnColorArrowBoth);
+            gbArrowCol.Controls.Add(lblArrUp);
+            gbArrowCol.Controls.Add(btnColorArrowUp);
+            gbArrowCol.Controls.Add(lblArrDn);
+            gbArrowCol.Controls.Add(btnColorArrowDown);
+
+            btnColorArrowBoth.Click += (s, e) => PickColor(btnColorArrowBoth, c => { SelectedArrowColorUnified = c; pnlPreview.Invalidate(); });
+            btnColorArrowUp.Click += (s, e) => PickColor(btnColorArrowUp, c => { SelectedArrowColorUp = c; pnlPreview.Invalidate(); });
+            btnColorArrowDown.Click += (s, e) => PickColor(btnColorArrowDown, c => { SelectedArrowColorDown = c; pnlPreview.Invalidate(); });
+
+            rbArrowUnified.CheckedChanged += (s, e) => UpdateColorControlsState();
+            rbArrowIndividual.CheckedChanged += (s, e) => UpdateColorControlsState();
+
+            y += 120;
+
+            // Grupo Cores dos Textos
+            GroupBox gbTextCol = new GroupBox
+            {
+                Text = isPt ? "Cores dos Textos (Velocidade & Unidade)" : "Text Colors (Speed & Units)",
+                Location = new Point(10, y),
+                Size = new Size(490, 110),
+                ForeColor = Color.FromArgb(200, 200, 200)
+            };
+            pnl.Controls.Add(gbTextCol);
+
+            rbTextUnified = new RadioButton { Text = isPt ? "Cor Única para Ambos:" : "Unified Color:", Location = new Point(15, 22), AutoSize = true, Checked = (SelectedTextColorMode != "Individual"), ForeColor = Color.White };
+            rbTextIndividual = new RadioButton { Text = isPt ? "Individuais (Upload / Download):" : "Individual (Up / Down):", Location = new Point(15, 62), AutoSize = true, Checked = (SelectedTextColorMode == "Individual"), ForeColor = Color.White };
+
+            btnColorTextBoth = CreateColorSwatchButton(SelectedTextColorUnified, 270, 20);
+            btnColorTextUp = CreateColorSwatchButton(SelectedTextColorUp, 270, 60);
+            btnColorTextDown = CreateColorSwatchButton(SelectedTextColorDown, 360, 60);
+
+            Label lblTxtUp = new Label { Text = "Up", Location = new Point(245, 65), AutoSize = true, ForeColor = Color.FromArgb(180, 180, 180) };
+            Label lblTxtDn = new Label { Text = "Down", Location = new Point(320, 65), AutoSize = true, ForeColor = Color.FromArgb(180, 180, 180) };
+
+            gbTextCol.Controls.Add(rbTextUnified);
+            gbTextCol.Controls.Add(rbTextIndividual);
+            gbTextCol.Controls.Add(btnColorTextBoth);
+            gbTextCol.Controls.Add(lblTxtUp);
+            gbTextCol.Controls.Add(btnColorTextUp);
+            gbTextCol.Controls.Add(lblTxtDn);
+            gbTextCol.Controls.Add(btnColorTextDown);
+
+            btnColorTextBoth.Click += (s, e) => PickColor(btnColorTextBoth, c => { SelectedTextColorUnified = c; pnlPreview.Invalidate(); });
+            btnColorTextUp.Click += (s, e) => PickColor(btnColorTextUp, c => { SelectedTextColorUp = c; pnlPreview.Invalidate(); });
+            btnColorTextDown.Click += (s, e) => PickColor(btnColorTextDown, c => { SelectedTextColorDown = c; pnlPreview.Invalidate(); });
+
+            rbTextUnified.CheckedChanged += (s, e) => UpdateColorControlsState();
+            rbTextIndividual.CheckedChanged += (s, e) => UpdateColorControlsState();
+
+            y += 115;
+
+            // Paletas Rápidas
+            Label lblPresets = new Label { Text = isPt ? "Paletas Rápidas:" : "Quick Palettes:", Location = new Point(10, y + 4), AutoSize = true, ForeColor = Color.FromArgb(180, 180, 180) };
+            pnl.Controls.Add(lblPresets);
+
+            Button btnP1 = CreatePresetButton(isPt ? "Branco" : "White", 125, y, Color.White, Color.FromArgb(225, 225, 225));
+            Button btnP2 = CreatePresetButton("Verde/Verm.", 205, y, Color.FromArgb(0, 230, 118), Color.FromArgb(255, 82, 82));
+            Button btnP3 = CreatePresetButton("Ciano/Laran.", 300, y, Color.FromArgb(0, 229, 255), Color.FromArgb(255, 145, 0));
+            Button btnP4 = CreatePresetButton("Azul Fluent", 400, y, Color.FromArgb(0, 120, 212), Color.White);
+
+            pnl.Controls.Add(btnP1);
+            pnl.Controls.Add(btnP2);
+            pnl.Controls.Add(btnP3);
+            pnl.Controls.Add(btnP4);
+
+            btnP1.Click += (s, e) =>
+            {
+                rbArrowUnified.Checked = true;
+                rbTextUnified.Checked = true;
+                SelectedArrowColorUnified = Color.FromArgb(225, 225, 225);
+                SelectedTextColorUnified = Color.White;
+                btnColorArrowBoth.BackColor = SelectedArrowColorUnified;
+                btnColorTextBoth.BackColor = SelectedTextColorUnified;
+                pnlPreview.Invalidate();
+            };
+
+            btnP2.Click += (s, e) =>
+            {
+                rbArrowIndividual.Checked = true;
+                rbTextIndividual.Checked = true;
+                SelectedArrowColorUp = Color.FromArgb(0, 230, 118);
+                SelectedTextColorUp = Color.FromArgb(0, 230, 118);
+                SelectedArrowColorDown = Color.FromArgb(255, 82, 82);
+                SelectedTextColorDown = Color.FromArgb(255, 82, 82);
+                btnColorArrowUp.BackColor = SelectedArrowColorUp;
+                btnColorTextUp.BackColor = SelectedTextColorUp;
+                btnColorArrowDown.BackColor = SelectedArrowColorDown;
+                btnColorTextDown.BackColor = SelectedTextColorDown;
+                pnlPreview.Invalidate();
+            };
+
+            btnP3.Click += (s, e) =>
+            {
+                rbArrowIndividual.Checked = true;
+                rbTextIndividual.Checked = true;
+                SelectedArrowColorUp = Color.FromArgb(0, 229, 255);
+                SelectedTextColorUp = Color.FromArgb(0, 229, 255);
+                SelectedArrowColorDown = Color.FromArgb(255, 145, 0);
+                SelectedTextColorDown = Color.FromArgb(255, 145, 0);
+                btnColorArrowUp.BackColor = SelectedArrowColorUp;
+                btnColorTextUp.BackColor = SelectedTextColorUp;
+                btnColorArrowDown.BackColor = SelectedArrowColorDown;
+                btnColorTextDown.BackColor = SelectedTextColorDown;
+                pnlPreview.Invalidate();
+            };
+
+            btnP4.Click += (s, e) =>
+            {
+                rbArrowUnified.Checked = true;
+                rbTextUnified.Checked = true;
+                SelectedArrowColorUnified = Color.FromArgb(0, 120, 212);
+                SelectedTextColorUnified = Color.White;
+                btnColorArrowBoth.BackColor = SelectedArrowColorUnified;
+                btnColorTextBoth.BackColor = SelectedTextColorUnified;
+                pnlPreview.Invalidate();
+            };
+
+            UpdateColorControlsState();
+        }
+
+        private Button CreateColorSwatchButton(Color col, int x, int y)
+        {
+            Button btn = new Button
+            {
+                Location = new Point(x, y),
+                Size = new Size(36, 26),
+                BackColor = col,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            btn.FlatAppearance.BorderColor = Color.FromArgb(120, 120, 120);
+            return btn;
+        }
+
+        private Button CreatePresetButton(string text, int x, int y, Color c1, Color c2)
+        {
+            Button btn = new Button
+            {
+                Text = text,
+                Location = new Point(x, y),
+                Size = new Size(88, 28),
+                BackColor = Color.FromArgb(45, 45, 45),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8f)
+            };
+            btn.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
+            return btn;
+        }
+
+        private void PickColor(Button targetBtn, Action<Color> onSelected)
+        {
+            using (ColorDialog cd = new ColorDialog())
+            {
+                cd.Color = targetBtn.BackColor;
+                if (cd.ShowDialog(this) == DialogResult.OK)
+                {
+                    targetBtn.BackColor = cd.Color;
+                    onSelected(cd.Color);
+                }
+            }
+        }
+
+        private void UpdateColorControlsState()
+        {
+            bool arrowUni = rbArrowUnified.Checked;
+            btnColorArrowBoth.Enabled = arrowUni;
+            btnColorArrowUp.Enabled = !arrowUni;
+            btnColorArrowDown.Enabled = !arrowUni;
+
+            bool textUni = rbTextUnified.Checked;
+            btnColorTextBoth.Enabled = textUni;
+            btnColorTextUp.Enabled = !textUni;
+            btnColorTextDown.Enabled = !textUni;
+
+            pnlPreview.Invalidate();
+        }
+
+        private void BuildPanelIcones(Panel pnl, bool isPt)
+        {
+            int y = 15;
+
+            Label lblTpl = new Label { Text = isPt ? "Modelo Pré-definido:" : "Preset Template:", Location = new Point(10, y + 3), AutoSize = true };
+            pnl.Controls.Add(lblTpl);
 
             cbTemplate = new ComboBox
             {
-                Location = new Point(170, 21),
-                Width = 265,
+                Location = new Point(190, y),
+                Width = 290,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 BackColor = Color.FromArgb(45, 45, 45),
                 ForeColor = Color.White
@@ -1172,58 +1947,37 @@ namespace NetMonitor
             else if (SelectedIconTemplate == "UnicodeSolid") cbTemplate.SelectedIndex = 3;
             else if (SelectedIconTemplate == "UnicodeCustom") cbTemplate.SelectedIndex = 4;
             else cbTemplate.SelectedIndex = 0;
-            gbIcons.Controls.Add(cbTemplate);
 
-            // Campos Unicode Customizados
-            Label lblUp = new Label { Text = isPt ? "Upload (Char/U+XXXX):" : "Upload (Char/U+XXXX):", Location = new Point(15, 60), AutoSize = true, ForeColor = Color.FromArgb(180, 180, 180) };
-            gbIcons.Controls.Add(lblUp);
-            txtUp = new TextBox { Location = new Point(205, 57), Width = 70, Text = SelectedCustomUpChar, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
-            gbIcons.Controls.Add(txtUp);
+            pnl.Controls.Add(cbTemplate);
 
-            Label lblDown = new Label { Text = isPt ? "Download (Char/U+XXXX):" : "Download (Char/U+XXXX):", Location = new Point(15, 95), AutoSize = true, ForeColor = Color.FromArgb(180, 180, 180) };
-            gbIcons.Controls.Add(lblDown);
-            txtDown = new TextBox { Location = new Point(205, 92), Width = 70, Text = SelectedCustomDownChar, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
-            gbIcons.Controls.Add(txtDown);
+            y += 50;
 
-            lblPreview = new Label { Text = isPt ? "Prévia:" : "Preview:", Location = new Point(300, 54), AutoSize = true, ForeColor = Color.FromArgb(170, 170, 170), Font = new Font(this.Font.FontFamily, 8f) };
-            gbIcons.Controls.Add(lblPreview);
+            Label lblUp = new Label { Text = isPt ? "Upload (Caractere ou U+XXXX):" : "Upload (Char or U+XXXX):", Location = new Point(10, y + 3), AutoSize = true };
+            pnl.Controls.Add(lblUp);
+            txtUp = new TextBox { Location = new Point(230, y), Width = 100, Text = SelectedCustomUpChar, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
+            pnl.Controls.Add(txtUp);
 
-            pnlPreview = new Panel { Location = new Point(345, 52), Size = new Size(100, 68), BackColor = Color.FromArgb(20, 20, 20), BorderStyle = BorderStyle.FixedSingle };
-            pnlPreview.Paint += (s, pe) =>
+            y += 40;
+
+            Label lblDown = new Label { Text = isPt ? "Download (Caractere ou U+XXXX):" : "Download (Char or U+XXXX):", Location = new Point(10, y + 3), AutoSize = true };
+            pnl.Controls.Add(lblDown);
+            txtDown = new TextBox { Location = new Point(230, y), Width = 100, Text = SelectedCustomDownChar, BackColor = Color.FromArgb(45, 45, 45), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
+            pnl.Controls.Add(txtDown);
+
+            y += 50;
+
+            Label lblHint = new Label
             {
-                Graphics g = pe.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-                string upC = NetMonitorApp.ParseUnicodeString(txtUp.Text, "▲");
-                string downC = NetMonitorApp.ParseUnicodeString(txtDown.Text, "▼");
-                bool right = rbRight.Checked;
-                using (Font fSpeed = new Font("Segoe UI", 9f, FontStyle.Regular))
-                using (Font fArrow = new Font("Segoe UI Symbol", 8.5f, FontStyle.Regular))
-                using (Brush bText = new SolidBrush(Color.White))
-                using (Brush bArrow = new SolidBrush(Color.FromArgb(190, 190, 190)))
-                {
-                    if (right)
-                    {
-                        g.DrawString("823 Mbps", fSpeed, bText, new PointF(4, 8));
-                        g.DrawString(upC, fArrow, bArrow, new PointF(76, 8));
-                        g.DrawString("142 Mbps", fSpeed, bText, new PointF(4, 38));
-                        g.DrawString(downC, fArrow, bArrow, new PointF(76, 38));
-                    }
-                    else
-                    {
-                        g.DrawString(upC, fArrow, bArrow, new PointF(4, 8));
-                        g.DrawString("823 Mbps", fSpeed, bText, new PointF(20, 8));
-                        g.DrawString(downC, fArrow, bArrow, new PointF(4, 38));
-                        g.DrawString("142 Mbps", fSpeed, bText, new PointF(20, 38));
-                    }
-                }
+                Text = isPt ? "Suporta caracteres colados diretamente (▲, 🠕, ↑) ou códigos hexadecimais como U+25B2, 0x25B2 ou 25B2." : "Supports direct chars (▲, ↑) or hexadecimal codes like U+25B2, 0x25B2 or 25B2.",
+                Location = new Point(10, y),
+                Size = new Size(480, 50),
+                ForeColor = Color.FromArgb(160, 160, 160),
+                Font = new Font(this.Font.FontFamily, 8.5f)
             };
-            gbIcons.Controls.Add(pnlPreview);
+            pnl.Controls.Add(lblHint);
 
             txtUp.TextChanged += (s, e) => pnlPreview.Invalidate();
             txtDown.TextChanged += (s, e) => pnlPreview.Invalidate();
-            rbRight.CheckedChanged += (s, e) => pnlPreview.Invalidate();
-            rbLeft.CheckedChanged += (s, e) => pnlPreview.Invalidate();
 
             cbTemplate.SelectedIndexChanged += (s, e) =>
             {
@@ -1233,71 +1987,157 @@ namespace NetMonitor
                 else if (cbTemplate.SelectedIndex == 3) { txtUp.Text = "▲"; txtDown.Text = "▼"; }
                 pnlPreview.Invalidate();
             };
+        }
 
-            curY += 150;
+        private void RenderLivePreview(object sender, PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(Color.FromArgb(28, 28, 28));
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-            // 5. Trava de Posição
-            chkLock = new CheckBox
+            string fontFam = cbFontFamily.SelectedItem != null ? cbFontFamily.SelectedItem.ToString() : "Segoe UI";
+            float fontSz = 10.5f;
+            if (cbFontSize.SelectedIndex == 0) fontSz = 8.5f;
+            else if (cbFontSize.SelectedIndex == 1) fontSz = 9.0f;
+            else if (cbFontSize.SelectedIndex == 2) fontSz = 9.5f;
+            else if (cbFontSize.SelectedIndex == 3) fontSz = 10.0f;
+            else if (cbFontSize.SelectedIndex == 5) fontSz = 11.0f;
+            else if (cbFontSize.SelectedIndex == 6) fontSz = 11.5f;
+            else if (cbFontSize.SelectedIndex == 7) fontSz = 12.0f;
+
+            FontStyle fSt = FontStyle.Regular;
+            if (cbFontStyle.SelectedIndex == 1) fSt = FontStyle.Bold;
+            else if (cbFontStyle.SelectedIndex == 2) fSt = FontStyle.Italic;
+
+            bool isRight = rbRight.Checked;
+
+            Color cTextUp = rbTextUnified.Checked ? btnColorTextBoth.BackColor : btnColorTextUp.BackColor;
+            Color cTextDn = rbTextUnified.Checked ? btnColorTextBoth.BackColor : btnColorTextDown.BackColor;
+
+            Color cArrUp = rbArrowUnified.Checked ? btnColorArrowBoth.BackColor : btnColorArrowUp.BackColor;
+            Color cArrDn = rbArrowUnified.Checked ? btnColorArrowBoth.BackColor : btnColorArrowDown.BackColor;
+
+            string upChar = NetMonitorApp.ParseUnicodeString(txtUp.Text, "▲");
+            string dnChar = NetMonitorApp.ParseUnicodeString(txtDown.Text, "▼");
+
+            using (Font fNum = new Font(fontFam, fontSz, fSt))
+            using (Font fUnit = new Font(fontFam, Math.Max(7.0f, fontSz - 1.5f), FontStyle.Regular))
+            using (Font fUni = new Font("Segoe UI Symbol", Math.Max(8.0f, fontSz - 1.0f), FontStyle.Regular))
+            using (Brush bTxtUp = new SolidBrush(cTextUp))
+            using (Brush bTxtDn = new SolidBrush(cTextDn))
+            using (Brush bArrUp = new SolidBrush(cArrUp))
+            using (Brush bArrDn = new SolidBrush(cArrDn))
+            using (StringFormat sfR = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center })
+            using (StringFormat sfL = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center })
+            using (StringFormat sfC = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
             {
-                Text = isPt ? "Travar posição na barra de tarefas (bloqueia arrasto acidental)" : "Lock position on taskbar (prevents accidental drag)",
-                Location = new Point(20, curY),
-                AutoSize = true,
-                Checked = SelectedIsLocked,
-                ForeColor = Color.FromArgb(230, 230, 230)
-            };
-            this.Controls.Add(chkLock);
+                if (isRight)
+                {
+                    g.DrawString("823.6", fNum, bTxtUp, new RectangleF(2, 4, 50, 18), sfR);
+                    g.DrawString("142.0", fNum, bTxtDn, new RectangleF(2, 24, 50, 18), sfR);
 
-            curY += 36;
+                    g.DrawString("Mbps", fUnit, bTxtUp, new RectangleF(53, 4, 38, 18), sfL);
+                    g.DrawString("Mbps", fUnit, bTxtDn, new RectangleF(53, 24, 38, 18), sfL);
 
-            // Botões Salvar / Cancelar
-            Button btnSave = new Button
-            {
-                Text = isPt ? "Salvar" : "Save",
-                Location = new Point(285, curY),
-                Size = new Size(95, 32),
-                BackColor = Color.FromArgb(0, 120, 212),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font(this.Font, FontStyle.Bold),
-                DialogResult = DialogResult.OK
-            };
-            btnSave.FlatAppearance.BorderSize = 0;
-            btnSave.Click += (s, e) =>
-            {
-                SelectedLanguage = (cbLang.SelectedIndex == 0) ? "pt" : "en";
+                    if (cbTemplate.SelectedIndex == 0)
+                    {
+                        g.FillPolygon(bArrUp, new PointF[] { new PointF(105, 7), new PointF(101, 13), new PointF(109, 13) });
+                        g.FillPolygon(bArrDn, new PointF[] { new PointF(105, 39), new PointF(101, 33), new PointF(109, 33) });
+                    }
+                    else if (cbTemplate.SelectedIndex == 1)
+                    {
+                        using (Pen pU = new Pen(cArrUp, 1.4f))
+                        using (Pen pD = new Pen(cArrDn, 1.4f))
+                        {
+                            g.DrawLines(pU, new PointF[] { new PointF(101, 12), new PointF(105, 8), new PointF(109, 12) });
+                            g.DrawLines(pD, new PointF[] { new PointF(101, 34), new PointF(105, 38), new PointF(109, 34) });
+                        }
+                    }
+                    else
+                    {
+                        g.DrawString(upChar, fUni, bArrUp, new RectangleF(97, 4, 16, 18), sfC);
+                        g.DrawString(dnChar, fUni, bArrDn, new RectangleF(97, 24, 16, 18), sfC);
+                    }
+                }
+                else
+                {
+                    if (cbTemplate.SelectedIndex == 0)
+                    {
+                        g.FillPolygon(bArrUp, new PointF[] { new PointF(10, 7), new PointF(6, 13), new PointF(14, 13) });
+                        g.FillPolygon(bArrDn, new PointF[] { new PointF(10, 39), new PointF(6, 33), new PointF(14, 33) });
+                    }
+                    else if (cbTemplate.SelectedIndex == 1)
+                    {
+                        using (Pen pU = new Pen(cArrUp, 1.4f))
+                        using (Pen pD = new Pen(cArrDn, 1.4f))
+                        {
+                            g.DrawLines(pU, new PointF[] { new PointF(6, 12), new PointF(10, 8), new PointF(14, 12) });
+                            g.DrawLines(pD, new PointF[] { new PointF(6, 34), new PointF(10, 38), new PointF(14, 34) });
+                        }
+                    }
+                    else
+                    {
+                        g.DrawString(upChar, fUni, bArrUp, new RectangleF(2, 4, 16, 18), sfC);
+                        g.DrawString(dnChar, fUni, bArrDn, new RectangleF(2, 24, 16, 18), sfC);
+                    }
 
-                if (cbUnits.SelectedIndex == 1) SelectedUnitMode = "Kbps";
-                else if (cbUnits.SelectedIndex == 2) SelectedUnitMode = "Mbps";
-                else if (cbUnits.SelectedIndex == 3) SelectedUnitMode = "Gbps";
-                else SelectedUnitMode = "Auto";
+                    g.DrawString("823.6", fNum, bTxtUp, new RectangleF(18, 4, 46, 18), sfR);
+                    g.DrawString("142.0", fNum, bTxtDn, new RectangleF(18, 24, 46, 18), sfR);
 
-                SelectedArrowOnRight = rbRight.Checked;
-                SelectedIsLocked = chkLock.Checked;
+                    g.DrawString("Mbps", fUnit, bTxtUp, new RectangleF(66, 4, 38, 18), sfL);
+                    g.DrawString("Mbps", fUnit, bTxtDn, new RectangleF(66, 24, 38, 18), sfL);
+                }
+            }
+        }
 
-                if (cbTemplate.SelectedIndex == 0) SelectedIconTemplate = "VectorTriangle";
-                else if (cbTemplate.SelectedIndex == 1) SelectedIconTemplate = "VectorChevron";
-                else SelectedIconTemplate = "Unicode";
+        private void ApplyAndClose()
+        {
+            SelectedLanguage = (cbLang.SelectedIndex == 0) ? "pt" : "en";
 
-                SelectedCustomUpChar = NetMonitorApp.ParseUnicodeString(txtUp.Text, "▲");
-                SelectedCustomDownChar = NetMonitorApp.ParseUnicodeString(txtDown.Text, "▼");
+            if (cbUnits.SelectedIndex == 1) SelectedUnitMode = "Kbps";
+            else if (cbUnits.SelectedIndex == 2) SelectedUnitMode = "Mbps";
+            else if (cbUnits.SelectedIndex == 3) SelectedUnitMode = "Gbps";
+            else SelectedUnitMode = "Auto";
 
-                this.Close();
-            };
-            this.Controls.Add(btnSave);
+            SelectedArrowOnRight = rbRight.Checked;
+            SelectedIsLocked = chkLock.Checked;
 
-            Button btnCancel = new Button
-            {
-                Text = isPt ? "Cancelar" : "Cancel",
-                Location = new Point(390, curY),
-                Size = new Size(90, 32),
-                BackColor = Color.FromArgb(50, 50, 50),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                DialogResult = DialogResult.Cancel
-            };
-            btnCancel.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
-            btnCancel.Click += (s, e) => this.Close();
-            this.Controls.Add(btnCancel);
+            SelectedFontFamily = cbFontFamily.SelectedItem != null ? cbFontFamily.SelectedItem.ToString() : "Segoe UI";
+
+            if (cbFontSize.SelectedIndex == 0) SelectedFontSize = 8.5f;
+            else if (cbFontSize.SelectedIndex == 1) SelectedFontSize = 9.0f;
+            else if (cbFontSize.SelectedIndex == 2) SelectedFontSize = 9.5f;
+            else if (cbFontSize.SelectedIndex == 3) SelectedFontSize = 10.0f;
+            else if (cbFontSize.SelectedIndex == 5) SelectedFontSize = 11.0f;
+            else if (cbFontSize.SelectedIndex == 6) SelectedFontSize = 11.5f;
+            else if (cbFontSize.SelectedIndex == 7) SelectedFontSize = 12.0f;
+            else SelectedFontSize = 10.5f;
+
+            if (cbFontStyle.SelectedIndex == 1) SelectedFontStyle = FontStyle.Bold;
+            else if (cbFontStyle.SelectedIndex == 2) SelectedFontStyle = FontStyle.Italic;
+            else SelectedFontStyle = FontStyle.Regular;
+
+            SelectedArrowColorMode = rbArrowIndividual.Checked ? "Individual" : "Unified";
+            SelectedArrowColorUnified = btnColorArrowBoth.BackColor;
+            SelectedArrowColorUp = btnColorArrowUp.BackColor;
+            SelectedArrowColorDown = btnColorArrowDown.BackColor;
+
+            SelectedTextColorMode = rbTextIndividual.Checked ? "Individual" : "Unified";
+            SelectedTextColorUnified = btnColorTextBoth.BackColor;
+            SelectedTextColorUp = btnColorTextUp.BackColor;
+            SelectedTextColorDown = btnColorTextDown.BackColor;
+
+            if (cbTemplate.SelectedIndex == 0) SelectedIconTemplate = "VectorTriangle";
+            else if (cbTemplate.SelectedIndex == 1) SelectedIconTemplate = "VectorChevron";
+            else if (cbTemplate.SelectedIndex == 2) SelectedIconTemplate = "UnicodeClassic";
+            else if (cbTemplate.SelectedIndex == 3) SelectedIconTemplate = "UnicodeSolid";
+            else SelectedIconTemplate = "UnicodeCustom";
+
+            SelectedCustomUpChar = NetMonitorApp.ParseUnicodeString(txtUp.Text, "▲");
+            SelectedCustomDownChar = NetMonitorApp.ParseUnicodeString(txtDown.Text, "▼");
+
+            this.Close();
         }
     }
 }

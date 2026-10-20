@@ -46,7 +46,7 @@ if (-not (Test-Path $uninstallReg)) {
     New-Item -Path $uninstallReg -Force | Out-Null
 }
 Set-ItemProperty -Path $uninstallReg -Name "DisplayName" -Value "NetMonitor (Monitor de Rede)"
-Set-ItemProperty -Path $uninstallReg -Name "DisplayVersion" -Value "1.0.5"
+Set-ItemProperty -Path $uninstallReg -Name "DisplayVersion" -Value "1.0.6"
 Set-ItemProperty -Path $uninstallReg -Name "Publisher" -Value "Eduardo Noé"
 Set-ItemProperty -Path $uninstallReg -Name "InstallLocation" -Value $installDir
 Set-ItemProperty -Path $uninstallReg -Name "DisplayIcon" -Value "$targetExe,0"
@@ -66,4 +66,4 @@ try {
 } catch {
     Start-Process -FilePath $targetExe
 }
-Write-Host "`nNetMonitor v1.0.5 instalado e iniciado com sucesso!" -ForegroundColor Green
+Write-Host "`nNetMonitor v1.0.6 instalado e iniciado com sucesso!" -ForegroundColor Green

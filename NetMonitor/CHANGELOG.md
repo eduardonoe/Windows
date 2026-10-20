@@ -4,6 +4,32 @@ Todas as alterações notáveis deste projeto seguem o padrão de **Versionament
 
 ---
 
+## [1.0.6] - 2026-10-20
+
+### Adicionado
+- **Tema Nativo do Windows 11 no Menu de Contexto (Modo Escuro / Claro Automático):**
+  - Implementado `Windows11MenuRenderer` e `Windows11ColorTable` que detectam o tema do sistema em tempo real, aplicando fundo escuro fluente (`#202020`), hover suave (`#323232`), textos brancos e caixas de seleção azuis (`#0078D4`). Em temas claros, adapta-se automaticamente à paleta clara do Windows.
+- **Seletor Completo de Tipografia na Interface:**
+  - Adicionado seletor de Família da Fonte (`Segoe UI Variable Display`, `Segoe UI`, `Cascadia Code`, `Consolas`, `Arial`, etc.).
+  - Seletor de Tamanho da Fonte (de 8.5 pt a 12.0 pt).
+  - Seletor de Estilo da Fonte (Regular, Negrito / Bold, Itálico / Italic).
+- **Sistema Avançado de Cores (Conjunto e Individual):**
+  - Controle de cor das **Setas**: modo unificado (ambas) ou cores individuais para Upload e Download.
+  - Controle de cor dos **Textos** (Velocidade e Unidade): modo unificado ou cores individuais para Upload e Download.
+  - Paletas rápidas com um clique (*Branco Clássico*, *Verde/Vermelho*, *Ciano/Laranja*, *Azul Fluent*).
+  - Suporte a seletor nativo `ColorDialog` com prévia em botões de amostra (*swatches*).
+- **Nova Arquitetura de Configurações com Abas e Live Preview Fixo:**
+  - Interface organizada em 4 abas limpas e modernas: **Geral**, **Tipografia**, **Cores** e **Ícones & Unicode**.
+  - Painel de pré-visualização ao vivo persistente na parte inferior, refletindo em tempo real qualquer mudança de fonte, cor, layout ou caractere.
+
+### Corrigido
+- **Invasão do Segundo Monitor em Setups Multi-tela:**
+  - Submenus configurados com `DropDownDirection = ToolStripDropDownDirection.Left`, forçando a expansão para a esquerda e mantendo todos os menus rigorosamente contidos nos limites do monitor atual.
+- **Fechamento Prematuro de Menus Suspensos / Comboboxes:**
+  - O timer Win32 e chamadas de reposicionamento são pausados durante a exibição do diálogo de configurações, eliminando mensagens `WM_CANCELMODE` que fechavam os seletores ao passar o mouse.
+
+---
+
 ## [1.0.5] - 2026-10-20
 
 ### Adicionado

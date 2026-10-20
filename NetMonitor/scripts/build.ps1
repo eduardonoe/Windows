@@ -1,10 +1,10 @@
 # ==============================================================================
-# NetMonitor - Script de Build Automatizado (v1.0.5)
+# NetMonitor - Script de Build Automatizado (v1.0.6)
 # Gera sempre os pacotes organizados na pasta release\:
 #   1. NetMonitorSetup.exe (Instalador Oficial)
 #   2. NetMonitor Portable\ (Pasta da versão portátil)
-#   3. NetMonitor-Portable-v1.0.5.zip (Arquivo portátil avulso)
-#   4. NetMonitor-v1.0.5.zip (Pacote completo com instalador + portátil)
+#   3. NetMonitor-Portable-v1.0.6.zip (Arquivo portátil avulso)
+#   4. NetMonitor-v1.0.6.zip (Pacote completo com instalador + portátil)
 # ==============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -73,7 +73,7 @@ Copy-Item -Path $netMonitorExe -Destination $portableExe -Force
 $portableReadme = Join-Path $portableDir "LEIA-ME.txt"
 $readmeContent = @"
 ==============================================================================
-NetMonitor v1.0.5 - NetMonitor Portable
+NetMonitor v1.0.6 - NetMonitor Portable
 Autor: Eduardo Noé (eduardonoe)
 ==============================================================================
 
@@ -96,13 +96,13 @@ This is the portable version of NetMonitor.
 "@
 Set-Content -Path $portableReadme -Value $readmeContent -Encoding UTF8
 
-# Gerar NetMonitor-Portable-v1.0.5.zip
-$portableZip = Join-Path $releaseDir "NetMonitor-Portable-v1.0.5.zip"
+# Gerar NetMonitor-Portable-v1.0.6.zip
+$portableZip = Join-Path $releaseDir "NetMonitor-Portable-v1.0.6.zip"
 if (Test-Path $portableZip) { Remove-Item $portableZip -Force }
 Compress-Archive -Path "$portableDir\*" -DestinationPath $portableZip -Force
 
-# Gerar NetMonitor-v1.0.5.zip (Instalador + Portátil)
-$combinedZip = Join-Path $releaseDir "NetMonitor-v1.0.5.zip"
+# Gerar NetMonitor-v1.0.6.zip (Instalador + Portátil)
+$combinedZip = Join-Path $releaseDir "NetMonitor-v1.0.6.zip"
 if (Test-Path $combinedZip) { Remove-Item $combinedZip -Force }
 
 # Usando .NET ZipFile para incluir o setup e a pasta portable
@@ -118,7 +118,7 @@ Get-ChildItem -Path $portableDir -Recurse | ForEach-Object {
 $zip.Dispose()
 
 Write-Host "`n========================================================" -ForegroundColor Green
-Write-Host "Build v1.0.5 Concluído e Organizado em release\!" -ForegroundColor Green
+Write-Host "Build v1.0.6 Concluído e Organizado em release\!" -ForegroundColor Green
 Write-Host "  * Pacote Completo: $combinedZip" -ForegroundColor Yellow
 Write-Host "  * Instalador:      $releaseSetup" -ForegroundColor Yellow
 Write-Host "  * Portátil:        $portableZip" -ForegroundColor Yellow

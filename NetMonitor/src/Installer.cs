@@ -1,7 +1,7 @@
 // ==============================================================================
 // NetMonitor Installer (Bilingual: Portuguese & English)
 // Autor: Eduardo Noé (eduardonoe)
-// Version: 1.0.5
+// Version: 1.0.6
 //
 // v1.0.3 changelog:
 // - Adiciona subpasta \NetMonitor automaticamente ao selecionar qualquer diretório.
