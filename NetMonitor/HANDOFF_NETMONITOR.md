@@ -72,9 +72,52 @@
 
 ---
 
+## 🚀 ATUALIZAÇÕES ADICIONAIS CONSOLIDADAS
+
+### 6. Instância Única (Single Instance via Mutex)
+* Bloqueio global de sessão no `Main()` impedindo que mais de uma instância rode concorrentemente. Tentativas subsequentes encerram de forma silenciosa e instantânea.
+
+### 7. Layout do Rodapé Corrigido (Sem Sobreposição)
+* O texto do preview foi reestruturado para `PRÉVIA AO VIVO` / `Tempo real` com `AutoSize = false` e largura restrita a 110px.
+* O botão `Redefinir Padrões` recebeu largura de 108px e posicionamento exclusivo a partir de X=238, eliminando qualquer colisão com os textos e preservando espaçamento simétrico em relação aos botões `Salvar` e `Cancelar`.
+
+### 8. Menu de Contexto: Opção de Idioma
+* Adicionado submenu **"Idioma"** / **"Language"** diretamente ao menu de contexto do widget na barra de tarefas:
+  - `✔ Português (Brasil)`
+  - `   English (United States)`
+* Alterna dinamicamente as legendas, persiste no registro e atualiza o widget em tempo real.
+
+### 9. Protetor de Tela: Suporte ao Botão "Visualizar" de `desk.cpl`
+* Ao clicar em "Visualizar" no painel de descanso de tela, o Windows dispara o protetor com `/s` em tela cheia sem sinalizar `SPI_GETSCREENSAVERRUNNING`.
+* Foi adicionada a validação por `GetForegroundWindow()` e varredura de processos `.scr` com verificação de tamanho (`w >= 400 && h >= 300`) e ausência de janela pai (`GetParent == IntPtr.Zero`).
+* O NetMonitor agora se auto-oculta perfeitamente no botão "Visualizar" e continua visível quando estiver apenas no mini-preview da janelinha.
+* Timer de verificação ajustado para 300ms com remoção de `HWND_TOPMOST` durante o protetor.
+
+### 10. Top 5 Agrupado por Aplicativo (Software)
+* Múltiplos workers, abas e subprocessos do mesmo software (ex: Antigravity IDE, Dropbox, Sync, Chrome) agora têm seus tráfegos somados e consolidados sob uma única entrada.
+* Título limpo sem extensão `.exe`, liberando as outras 4 posições do Top 5 para os demais softwares ativos.
+
+### 11. Identidade e Contato do Desenvolvedor (Noé VFX)
+* Rodapé da sidebar das Configurações inclui:
+  - *desenvolvido por* **Noé VFX | noevfx.com** (link clicável direto para `https://noevfx.com`)
+  - **contato@noevfx.com** (link direto para `mailto:contato@noevfx.com`)
+* Adicionado atalho direto `Noé VFX (noevfx.com)` no menu de contexto do widget.
+
+### 12. Janela de Configurações no ALT + TAB e Barra de Tarefas
+* **Problema:** A janela de personalização (`SettingsForm`) possuía `ShowInTaskbar = false;` e não herdava estilo de aplicativo, sendo excluída pelo DWM do carrossel do ALT + TAB e da barra de tarefas caso outra janela cobrisse a tela.
+* **Solução:**
+  - `this.ShowInTaskbar = true;` em `InitializeUI()`.
+  - Herança do ícone do executável (`this.Icon = parentApp.Icon`).
+  - Override de `CreateParams` com `WS_EX_APPWINDOW (0x00040000)` para forçar registro no Shell e DWM.
+  - Implementação de `OnHandleCreated` aplicando `UpdateTitleBarTheme(isDarkTheme)` imediatamente.
+
+---
+
 ## 🛠️ SCRIPTS DE AUTOMAÇÃO
 * **Compilar:** `powershell -ExecutionPolicy Bypass -File "D:\_Antigravity\NetMonitor\build.ps1"`
 * **Instalar:** `powershell -ExecutionPolicy Bypass -File "D:\_Antigravity\NetMonitor\scripts\install.ps1"`
 * **Desinstalar:** `powershell -ExecutionPolicy Bypass -File "D:\_Antigravity\NetMonitor\scripts\uninstall.ps1"`
 * **Sincronizar Drive:** `powershell -ExecutionPolicy Bypass -File "D:\_Antigravity\NetMonitor\scripts\upload_to_drive.ps1"`
 * **Versão:** Manter rigorosamente **`1.0.0`**.
+
+

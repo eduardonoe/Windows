@@ -94,7 +94,7 @@ This is the portable version of NetMonitor.
   widget in the taskbar.
 ==============================================================================
 "@
-Set-Content -Path $portableReadme -Value $readmeContent -Encoding UTF8
+[System.IO.File]::WriteAllText($portableReadme, $readmeContent, [System.Text.Encoding]::UTF8)
 
 # Gerar NetMonitor-Portable-v1.0.0.zip
 $portableZip = Join-Path $releaseDir "NetMonitor-Portable-v1.0.0.zip"

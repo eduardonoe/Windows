@@ -57,6 +57,15 @@ namespace NetMonitor
         private static extern IntPtr FindWindowEx(IntPtr parentHandle, IntPtr childAfter, string className, string windowTitle);
 
         [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetParent(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
         private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
         [DllImport("user32.dll")]
@@ -529,20 +538,63 @@ namespace NetMonitor
             }
         }
 
+        private static bool IsScreensaverName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            return name.EndsWith(".scr", StringComparison.OrdinalIgnoreCase) ||
+                   name.IndexOf("screensaver", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   string.Equals(name, "Bubbles", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "Mystify", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "Ribbons", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "PhotoScreensaver", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "ssText3d", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "scrnsave", StringComparison.OrdinalIgnoreCase);
+        }
+
         public static bool IsAnyScreensaverActive()
         {
-            // 1. Verificação oficial SPI
-            bool ss = false;
-            if (SystemParametersInfo(SPI_GETSCREENSAVERRUNNING, 0, ref ss, 0) && ss)
-                return true;
-
-            // 2. Janela clássica de screensaver
-            if (FindWindow("WindowsScreenSaverClass", null) != IntPtr.Zero)
-                return true;
-
-            // 3. Processos .scr ativos no Windows (via Toolhelp32: instantâneo, 0.05ms, zero alocação de heap)
             try
             {
+                // 1. Verificação oficial SPI (quando o Windows ativa automaticamente por timeout de ociosidade)
+                bool ss = false;
+                if (SystemParametersInfo(SPI_GETSCREENSAVERRUNNING, 0, ref ss, 0) && ss)
+                    return true;
+
+                // 2. Janela clássica de screensaver de tela cheia
+                if (FindWindow("WindowsScreenSaverClass", null) != IntPtr.Zero)
+                    return true;
+
+                // 3. Verificação da Janela em Primeiro Plano (cobre imediatamente o botão "Visualizar" de desk.cpl)
+                IntPtr fg = GetForegroundWindow();
+                if (fg != IntPtr.Zero)
+                {
+                    uint fgPid = 0;
+                    GetWindowThreadProcessId(fg, out fgPid);
+                    if (fgPid > 0)
+                    {
+                        try
+                        {
+                            using (Process p = Process.GetProcessById((int)fgPid))
+                            {
+                                if (IsScreensaverName(p.ProcessName))
+                                {
+                                    RECT rc;
+                                    if (GetWindowRect(fg, out rc))
+                                    {
+                                        int w = rc.Right - rc.Left;
+                                        int h = rc.Bottom - rc.Top;
+                                        // Mini-preview tem ~150x110px. Tela cheia tem >= 640x480px.
+                                        if (w >= 400 && h >= 300)
+                                            return true;
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                }
+
+                // 4. Varredura via Toolhelp32 de processos .scr ativos em tela cheia (sem pai e com tamanho real)
                 IntPtr hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
                 if (hSnap != IntPtr.Zero && hSnap != (IntPtr)(-1))
                 {
@@ -554,19 +606,31 @@ namespace NetMonitor
                         {
                             do
                             {
-                                if (!string.IsNullOrEmpty(pe.szExeFile))
+                                if (IsScreensaverName(pe.szExeFile))
                                 {
-                                    if (pe.szExeFile.EndsWith(".scr", StringComparison.OrdinalIgnoreCase) ||
-                                        pe.szExeFile.IndexOf("screensaver", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                        string.Equals(pe.szExeFile, "Bubbles", StringComparison.OrdinalIgnoreCase) ||
-                                        string.Equals(pe.szExeFile, "Mystify", StringComparison.OrdinalIgnoreCase) ||
-                                        string.Equals(pe.szExeFile, "Ribbons", StringComparison.OrdinalIgnoreCase) ||
-                                        string.Equals(pe.szExeFile, "PhotoScreensaver", StringComparison.OrdinalIgnoreCase) ||
-                                        string.Equals(pe.szExeFile, "ssText3d", StringComparison.OrdinalIgnoreCase) ||
-                                        string.Equals(pe.szExeFile, "scrnsave", StringComparison.OrdinalIgnoreCase))
+                                    try
                                     {
-                                        return true;
+                                        using (Process p = Process.GetProcessById((int)pe.th32ProcessID))
+                                        {
+                                            IntPtr hMain = p.MainWindowHandle;
+                                            if (hMain != IntPtr.Zero)
+                                            {
+                                                RECT rc;
+                                                if (GetWindowRect(hMain, out rc))
+                                                {
+                                                    int w = rc.Right - rc.Left;
+                                                    int h = rc.Bottom - rc.Top;
+                                                    // Em mini-preview, GetParent != IntPtr.Zero e tamanho < 200px.
+                                                    // Em tela cheia ("Visualizar" ou timer), GetParent == IntPtr.Zero e cobre a tela.
+                                                    if (w >= 400 && h >= 300 && GetParent(hMain) == IntPtr.Zero)
+                                                    {
+                                                        return true;
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
+                                    catch { }
                                 }
                             } while (Process32Next(hSnap, ref pe));
                         }
@@ -731,8 +795,9 @@ namespace NetMonitor
 
         private void SetupTimer()
         {
+            int tickCount = 0;
             updateTimer = new Timer();
-            updateTimer.Interval = 1000;
+            updateTimer.Interval = 300;
             updateTimer.Tick += (s, e) =>
             {
                 // Proteção contra descanso de tela / screensaver
@@ -741,15 +806,15 @@ namespace NetMonitor
                     bool ss = IsAnyScreensaverActive();
                     if (ss || isSessionLocked)
                     {
-                        isScreensaverRunning = true;
-                        if (this.Visible)
+                        if (!isScreensaverRunning || this.Visible)
                         {
+                            isScreensaverRunning = true;
                             this.Visible = false;
                             SetWindowPos(this.Handle, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
-                        }
-                        if (flyoutForm != null && flyoutForm.Visible)
-                        {
-                            flyoutForm.Hide();
+                            if (flyoutForm != null && flyoutForm.Visible)
+                            {
+                                flyoutForm.Hide();
+                            }
                         }
                         return; // Não executa SetWindowPos de exibição nem UpdateTraffic enquanto em descanso!
                     }
@@ -765,12 +830,17 @@ namespace NetMonitor
                     }
                 }
 
-                UpdateTraffic();
-
-                bool isDarkNow = IsWindowsDarkTheme();
-                if (isDarkNow != lastThemeIsDark)
+                tickCount++;
+                if (tickCount >= 3)
                 {
-                    ApplySystemTheme();
+                    tickCount = 0;
+                    UpdateTraffic();
+
+                    bool isDarkNow = IsWindowsDarkTheme();
+                    if (isDarkNow != lastThemeIsDark)
+                    {
+                        ApplySystemTheme();
+                    }
                 }
 
                 if (this.Visible && !isSettingsDialogOpen && !isScreensaverRunning && !isSessionLocked)
@@ -816,7 +886,11 @@ namespace NetMonitor
 
             if (m.Msg == WM_WINDOWPOSCHANGING)
             {
-                if (this.Visible && !isScreensaverRunning && !isSessionLocked)
+                if (hideOnScreensaver && isScreensaverRunning)
+                {
+                    // Não força HWND_TOPMOST se screensaver estiver ativo
+                }
+                else if (this.Visible && !isScreensaverRunning && !isSessionLocked)
                 {
                     WINDOWPOS pos = (WINDOWPOS)Marshal.PtrToStructure(m.LParam, typeof(WINDOWPOS));
                     pos.hwndInsertAfter = HWND_TOPMOST;
@@ -1570,9 +1644,37 @@ namespace NetMonitor
             mnuLayout.DropDownItems.Add(itmLeft);
             contextMenu.Items.Add(mnuLayout);
 
+            // 4. Idioma da Interface / Language
+            ToolStripMenuItem mnuLang = new ToolStripMenuItem(isPt ? "Idioma" : "Language");
+            ConfigureSubmenu(mnuLang);
+
+            ToolStripMenuItem itmPt = new ToolStripMenuItem("Português (Brasil)");
+            itmPt.Checked = isPt;
+            itmPt.Click += (s, e) =>
+            {
+                currentLanguage = "pt";
+                SaveSettings();
+                BuildContextMenu();
+                this.Invalidate();
+            };
+
+            ToolStripMenuItem itmEn = new ToolStripMenuItem("English (United States)");
+            itmEn.Checked = !isPt;
+            itmEn.Click += (s, e) =>
+            {
+                currentLanguage = "en";
+                SaveSettings();
+                BuildContextMenu();
+                this.Invalidate();
+            };
+
+            mnuLang.DropDownItems.Add(itmPt);
+            mnuLang.DropDownItems.Add(itmEn);
+            contextMenu.Items.Add(mnuLang);
+
             contextMenu.Items.Add(new ToolStripSeparator());
 
-            // 4. Travar Posição
+            // 5. Travar Posição
             ToolStripMenuItem mnuLock = new ToolStripMenuItem(isPt ? "Travar Posição" : "Lock Position");
             mnuLock.Checked = isLocked;
             mnuLock.Click += (s, e) =>
@@ -1583,7 +1685,7 @@ namespace NetMonitor
             };
             contextMenu.Items.Add(mnuLock);
 
-            // 5. Iniciar com o Windows
+            // 6. Iniciar com o Windows
             ToolStripMenuItem mnuAutoStart = new ToolStripMenuItem(isPt ? "Iniciar com o Windows" : "Start with Windows");
             mnuAutoStart.Checked = IsAutoStartEnabled();
             mnuAutoStart.Click += (s, e) =>
@@ -1594,14 +1696,24 @@ namespace NetMonitor
             };
             contextMenu.Items.Add(mnuAutoStart);
 
-            // 6. Redefinir Posição
+            // 7. Redefinir Posição
             ToolStripMenuItem mnuReset = new ToolStripMenuItem(isPt ? "Redefinir Posição" : "Reset Position");
             mnuReset.Click += (s, e) => PositionWidget(true);
             contextMenu.Items.Add(mnuReset);
 
             contextMenu.Items.Add(new ToolStripSeparator());
 
-            // 7. Sair / Exit
+            // 8. Desenvolvedor / Developer
+            ToolStripMenuItem mnuDev = new ToolStripMenuItem("Noé VFX (noevfx.com)");
+            mnuDev.Click += (s, e) =>
+            {
+                try { Process.Start("https://noevfx.com"); } catch { }
+            };
+            contextMenu.Items.Add(mnuDev);
+
+            contextMenu.Items.Add(new ToolStripSeparator());
+
+            // 9. Sair / Exit
             ToolStripMenuItem mnuExit = new ToolStripMenuItem(isPt ? "Sair" : "Exit");
             mnuExit.Click += (s, e) =>
             {
@@ -2010,17 +2122,9 @@ namespace NetMonitor
                 HashSet<int> activePids = GetActiveNetworkPids();
                 if (activePids.Count == 0) return;
 
-                List<ProcessTrafficItem> rawItems = new List<ProcessTrafficItem>();
-                Dictionary<string, int> nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                Dictionary<int, string> pidNames = new Dictionary<int, string>();
-
-                foreach (int pid in activePids)
-                {
-                    string pName = GetProcessName(pid);
-                    pidNames[pid] = pName;
-                    if (!nameCounts.ContainsKey(pName)) nameCounts[pName] = 0;
-                    nameCounts[pName]++;
-                }
+                // Agrupamento por software/aplicativo (soma tráfego de múltiplos workers e instâncias)
+                Dictionary<string, ulong> appTraffic = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
+                Dictionary<string, int> appPrimaryPid = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (int pid in activePids)
                 {
@@ -2041,15 +2145,16 @@ namespace NetMonitor
                                         ulong delta = total - last;
                                         if (delta > 0)
                                         {
-                                            string baseName = pidNames[pid];
-                                            string label = (nameCounts[baseName] > 1) ? string.Format("{0} ({1})", baseName, pid) : baseName;
-                                            rawItems.Add(new ProcessTrafficItem
+                                            string baseName = GetProcessName(pid);
+                                            if (baseName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                                                baseName = baseName.Substring(0, baseName.Length - 4);
+
+                                            if (!appTraffic.ContainsKey(baseName))
                                             {
-                                                Pid = pid,
-                                                Name = label,
-                                                DeltaBytes = delta,
-                                                SpeedText = FormatSpeedForProcess(delta)
-                                            });
+                                                appTraffic[baseName] = 0;
+                                                appPrimaryPid[baseName] = pid;
+                                            }
+                                            appTraffic[baseName] += delta;
                                         }
                                     }
                                 }
@@ -2074,13 +2179,25 @@ namespace NetMonitor
                     for (int i = 0; i < toRemove.Count; i++) lastProcessIo.Remove(toRemove[i]);
                 }
 
+                List<ProcessTrafficItem> groupedItems = new List<ProcessTrafficItem>();
+                foreach (var kvp in appTraffic)
+                {
+                    groupedItems.Add(new ProcessTrafficItem
+                    {
+                        Pid = appPrimaryPid[kvp.Key],
+                        Name = kvp.Key,
+                        DeltaBytes = kvp.Value,
+                        SpeedText = FormatSpeedForProcess(kvp.Value)
+                    });
+                }
+
                 // Ordenação dinâmica em tempo real (maior consumo primeiro)
-                rawItems.Sort((a, b) => b.DeltaBytes.CompareTo(a.DeltaBytes));
+                groupedItems.Sort((a, b) => b.DeltaBytes.CompareTo(a.DeltaBytes));
 
                 List<ProcessTrafficItem> top5 = new List<ProcessTrafficItem>();
-                for (int i = 0; i < rawItems.Count && i < 5; i++)
+                for (int i = 0; i < groupedItems.Count && i < 5; i++)
                 {
-                    top5.Add(rawItems[i]);
+                    top5.Add(groupedItems[i]);
                 }
 
                 if (flyoutForm != null && flyoutForm.Visible && flyoutForm.IsHandleCreated)
@@ -2299,9 +2416,27 @@ namespace NetMonitor
             base.OnFormClosing(e);
         }
 
+        private static Mutex singleInstanceMutex = null;
+
         [STAThread]
         public static void Main()
         {
+            bool createdNew = false;
+            try
+            {
+                singleInstanceMutex = new Mutex(true, "NetMonitor_SingleInstance_Mutex_EduardoNoe", out createdNew);
+            }
+            catch
+            {
+                createdNew = false;
+            }
+
+            if (!createdNew)
+            {
+                // Instância prévia já ativa: encerra para evitar duplicidade
+                return;
+            }
+
             try
             {
                 SetProcessDpiAwareness(2);
@@ -2321,7 +2456,18 @@ namespace NetMonitor
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new NetMonitorApp());
+            try
+            {
+                Application.Run(new NetMonitorApp());
+            }
+            finally
+            {
+                if (singleInstanceMutex != null)
+                {
+                    try { singleInstanceMutex.ReleaseMutex(); } catch { }
+                    try { singleInstanceMutex.Close(); } catch { }
+                }
+            }
         }
     }
 
@@ -2488,9 +2634,11 @@ namespace NetMonitor
                     // Ranking: 1, 2, 3, 4, 5
                     g.DrawString((i + 1).ToString(), fRank, brRank, 14, y);
 
-                    // Nome do processo
+                    // Nome do aplicativo
                     string displayName = item.Name;
-                    if (displayName.Length > 17) displayName = displayName.Substring(0, 15) + "…";
+                    if (displayName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                        displayName = displayName.Substring(0, displayName.Length - 4);
+                    if (displayName.Length > 20) displayName = displayName.Substring(0, 18) + "…";
                     g.DrawString(displayName, fName, brName, 28, y - 1);
 
                     // Velocidade à direita
@@ -2746,8 +2894,14 @@ namespace NetMonitor
         private Panel pnlLivePreview;
         private Label lblPrevTitle;
         private Label lblPrevDesc;
+        private Button btnResetDefaults;
         private Button btnSave;
         private Button btnCancel;
+
+        // Bloco do Desenvolvedor
+        private Label lblDevTitle;
+        private LinkLabel lnkDev;
+        private LinkLabel lnkContact;
 
         // Cores Dinâmicas de UI
         private Color clrFormBg;
@@ -2850,6 +3004,22 @@ namespace NetMonitor
             catch { }
         }
 
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= 0x00040000; // WS_EX_APPWINDOW: Garante presença explícita no alternador ALT+TAB do Windows
+                return cp;
+            }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            UpdateTitleBarTheme(isDarkTheme);
+        }
+
         protected override void WndProc(ref Message m)
         {
             const int WM_SETTINGCHANGE = 0x001A;
@@ -2916,6 +3086,14 @@ namespace NetMonitor
                         lbl.ForeColor = clrAccent;
                     }
                     else if (lbl.Font.Size < 8.5f)
+                    {
+                        lbl.ForeColor = clrTextSub;
+                    }
+                    else if ((lbl == lblUp || lbl == lblDown) && cbTemplate != null && cbTemplate.SelectedIndex != 5)
+                    {
+                        lbl.ForeColor = clrTextSub;
+                    }
+                    else if (lbl == lblDevTitle)
                     {
                         lbl.ForeColor = clrTextSub;
                     }
@@ -2988,7 +3166,7 @@ namespace NetMonitor
                                                 btn.ForeColor = clrTextMain;
                                                 btn.FlatAppearance.BorderColor = clrBorder;
                                             }
-                                            else if (btn == btnCancel)
+                                            else if (btn == btnCancel || btn == btnResetDefaults)
                                             {
                                                 btn.BackColor = clrCardBg;
                                                 btn.ForeColor = clrTextMain;
@@ -2998,6 +3176,15 @@ namespace NetMonitor
                                             {
                                                 btn.BackColor = clrAccent;
                                                 btn.ForeColor = Color.White;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            LinkLabel ll = c as LinkLabel;
+                                            if (ll != null)
+                                            {
+                                                if (ll == lnkDev) ll.LinkColor = clrAccent;
+                                                else ll.LinkColor = clrTextSub;
                                             }
                                         }
                                     }
@@ -3073,7 +3260,19 @@ namespace NetMonitor
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.MinimizeBox = false;
-            this.ShowInTaskbar = false;
+            this.ShowInTaskbar = true;
+            try
+            {
+                if (parentApp != null && parentApp.Icon != null)
+                {
+                    this.Icon = parentApp.Icon;
+                }
+                else
+                {
+                    this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                }
+            }
+            catch { }
             this.BackColor = clrFormBg;
             this.Font = new Font("Segoe UI", 9.0f, FontStyle.Regular);
 
@@ -3128,6 +3327,60 @@ namespace NetMonitor
             pnlSidebar.Controls.Add(btnNavCores);
             pnlSidebar.Controls.Add(btnNavIcones);
 
+            // Bloco do Desenvolvedor (Noé VFX)
+            Panel pnlDevDiv = new Panel
+            {
+                Location = new Point(14, 452),
+                Size = new Size(152, 1),
+                BackColor = clrBorder
+            };
+            pnlSidebar.Controls.Add(pnlDevDiv);
+
+            lblDevTitle = new Label
+            {
+                Text = isPt ? "desenvolvido por" : "developed by",
+                Font = new Font("Segoe UI", 7.0f, FontStyle.Regular),
+                ForeColor = clrTextSub,
+                Location = new Point(14, 460),
+                AutoSize = true,
+                UseMnemonic = false
+            };
+            pnlSidebar.Controls.Add(lblDevTitle);
+
+            lnkDev = new LinkLabel
+            {
+                Text = "Noé VFX | noevfx.com",
+                Font = new Font("Segoe UI", 8.0f, FontStyle.Bold),
+                LinkColor = clrAccent,
+                ActiveLinkColor = clrAccent,
+                VisitedLinkColor = clrAccent,
+                Location = new Point(14, 477),
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+                UseMnemonic = false
+            };
+            lnkDev.LinkClicked += (s, e) => {
+                try { Process.Start("https://noevfx.com"); } catch { }
+            };
+            pnlSidebar.Controls.Add(lnkDev);
+
+            lnkContact = new LinkLabel
+            {
+                Text = "contato@noevfx.com",
+                Font = new Font("Segoe UI", 7.5f, FontStyle.Regular),
+                LinkColor = clrTextSub,
+                ActiveLinkColor = clrAccent,
+                VisitedLinkColor = clrTextSub,
+                Location = new Point(14, 497),
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+                UseMnemonic = false
+            };
+            lnkContact.LinkClicked += (s, e) => {
+                try { Process.Start("mailto:contato@noevfx.com"); } catch { }
+            };
+            pnlSidebar.Controls.Add(lnkContact);
+
             // ==============================================================
             // 2. PAINEL PRINCIPAL DIREITO (560px de largura, inicia em X=180)
             // ==============================================================
@@ -3145,7 +3398,8 @@ namespace NetMonitor
                 Font = new Font("Segoe UI", 13.0f, FontStyle.Bold),
                 ForeColor = clrTextMain,
                 AutoSize = true,
-                Location = new Point(24, 16)
+                Location = new Point(24, 16),
+                UseMnemonic = false
             };
             pnlMainContent.Controls.Add(lblHeaderTitle);
 
@@ -3200,8 +3454,8 @@ namespace NetMonitor
 
             pnlLivePreview = new Panel
             {
-                Location = new Point(24, 18),
-                Size = new Size(116, 42),
+                Location = new Point(18, 18),
+                Size = new Size(100, 42),
                 BackColor = isDarkTheme ? NetMonitorApp.BG_COLOR_DARK : NetMonitorApp.BG_COLOR_LIGHT
             };
             pnlLivePreview.Paint += PnlLivePreview_Paint;
@@ -3209,35 +3463,55 @@ namespace NetMonitor
 
             lblPrevTitle = new Label
             {
-                Text = isPt ? "PRÉ-VISUALIZAÇÃO AO VIVO" : "LIVE PREVIEW",
+                Text = isPt ? "PRÉVIA AO VIVO" : "LIVE PREVIEW",
                 Font = new Font("Segoe UI", 7.5f, FontStyle.Bold),
                 ForeColor = clrAccent,
-                Location = new Point(152, 18),
-                AutoSize = true
+                Location = new Point(124, 20),
+                Size = new Size(110, 16),
+                AutoSize = false,
+                UseMnemonic = false
             };
             pnlBottom.Controls.Add(lblPrevTitle);
 
             lblPrevDesc = new Label
             {
-                Text = isPt ? "Atualização instantânea na barra de tarefas e no painel." : "Instant live update on taskbar and settings panel.",
+                Text = isPt ? "Tempo real" : "Real-time",
                 Font = new Font("Segoe UI", 7.5f, FontStyle.Regular),
                 ForeColor = clrTextSub,
-                Location = new Point(152, 36),
-                Size = new Size(185, 32),
-                AutoSize = false
+                Location = new Point(124, 38),
+                Size = new Size(110, 18),
+                AutoSize = false,
+                UseMnemonic = false
             };
             pnlBottom.Controls.Add(lblPrevDesc);
+
+            btnResetDefaults = new Button
+            {
+                Text = isPt ? "Redefinir Padrões" : "Reset Defaults",
+                Font = new Font("Segoe UI", 8.0f, FontStyle.Regular),
+                Location = new Point(238, 20),
+                Size = new Size(108, 36),
+                BackColor = clrCardBg,
+                ForeColor = clrTextMain,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                UseMnemonic = false
+            };
+            btnResetDefaults.FlatAppearance.BorderColor = clrBorder;
+            btnResetDefaults.Click += (s, e) => ResetToDefaults(SelectedLanguage == "pt");
+            pnlBottom.Controls.Add(btnResetDefaults);
 
             btnSave = new Button
             {
                 Text = isPt ? "Salvar" : "Save",
                 Font = new Font("Segoe UI", 9.0f, FontStyle.Bold),
-                Location = new Point(345, 20),
-                Size = new Size(90, 36),
+                Location = new Point(354, 20),
+                Size = new Size(88, 36),
                 BackColor = clrAccent,
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                UseMnemonic = false
             };
             btnSave.FlatAppearance.BorderSize = 0;
             btnSave.Click += BtnSave_Click;
@@ -3247,12 +3521,13 @@ namespace NetMonitor
             {
                 Text = isPt ? "Cancelar" : "Cancel",
                 Font = new Font("Segoe UI", 9.0f, FontStyle.Regular),
-                Location = new Point(445, 20),
-                Size = new Size(90, 36),
+                Location = new Point(450, 20),
+                Size = new Size(88, 36),
                 BackColor = clrCardBg,
                 ForeColor = clrTextMain,
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                UseMnemonic = false
             };
             btnCancel.FlatAppearance.BorderColor = clrBorder;
             btnCancel.Click += (s, e) => { this.DialogResult = DialogResult.Cancel; this.Close(); };
@@ -3508,13 +3783,114 @@ namespace NetMonitor
             btnNavIcones.Text = isPt ? "🔼  Ícones & Setas" : "🔼  Icons & Arrows";
             btnSave.Text = isPt ? "Salvar" : "Save";
             btnCancel.Text = isPt ? "Cancelar" : "Cancel";
-            lblPrevTitle.Text = isPt ? "PRÉ-VISUALIZAÇÃO AO VIVO" : "LIVE PREVIEW";
-            lblPrevDesc.Text = isPt ? "Atualização instantânea na barra de tarefas e no painel." : "Instant live update on taskbar and settings panel.";
+            if (btnResetDefaults != null) btnResetDefaults.Text = isPt ? "Redefinir Padrões" : "Reset Defaults";
+            if (lblDevTitle != null) lblDevTitle.Text = isPt ? "desenvolvido por" : "developed by";
+            lblPrevTitle.Text = isPt ? "PRÉVIA AO VIVO" : "LIVE PREVIEW";
+            lblPrevDesc.Text = isPt ? "Tempo real" : "Real-time";
             if (btnPresetCiano != null) btnPresetCiano.Text = isPt ? "Ciano & Verde" : "Cyan & Green";
             if (btnPresetClassico != null) btnPresetClassico.Text = isPt ? "Clássico Rede" : "Classic Net";
             if (btnPresetPadrao != null) btnPresetPadrao.Text = isPt ? "Padrão Win11" : "Win11 Default";
             if (btnPresetMono != null) btnPresetMono.Text = isPt ? "Monocromático" : "Monochrome";
             SwitchPage(pnlPageGeral.Visible ? 0 : pnlPageFonte.Visible ? 1 : pnlPageCores.Visible ? 2 : 3);
+        }
+
+        private void ResetToDefaults(bool isPt)
+        {
+            // 1. Geral
+            SelectedLanguage = "pt";
+            if (cbLang != null) cbLang.SelectedIndex = 0;
+
+            SelectedSpeedUnitFormat = "Bits";
+            if (cbFormat != null) cbFormat.SelectedIndex = 0;
+
+            SelectedUnitMode = "Auto";
+            if (cbUnits != null) cbUnits.SelectedIndex = 0;
+
+            SelectedArrowOnRight = true;
+            if (rbRight != null) rbRight.Checked = true;
+            if (rbLeft != null) rbLeft.Checked = false;
+
+            SelectedIsLocked = false;
+            if (chkLock != null) chkLock.Checked = false;
+
+            SelectedHideOnScreensaver = true;
+            if (chkScreensaver != null) chkScreensaver.Checked = true;
+
+            SelectedShowHoverFlyout = true;
+            if (chkHoverFlyout != null) chkHoverFlyout.Checked = true;
+
+            // 2. Tipografia
+            SelectedFontFamily = "Segoe UI Variable Display";
+            if (cbFontFamily != null)
+            {
+                int fIdx = 0;
+                for (int i = 0; i < cbFontFamily.Items.Count; i++)
+                {
+                    if (string.Equals(cbFontFamily.Items[i].ToString(), "Segoe UI Variable Display", StringComparison.OrdinalIgnoreCase))
+                    {
+                        fIdx = i;
+                        break;
+                    }
+                }
+                cbFontFamily.SelectedIndex = fIdx;
+            }
+
+            SelectedFontSize = 9.5f;
+            if (cbFontSize != null) cbFontSize.SelectedIndex = 3;
+
+            SelectedFontStyle = FontStyle.Bold;
+            if (cbFontStyle != null) cbFontStyle.SelectedIndex = 1;
+
+            // 3. Cores
+            SelectedTextColorMode = "Unified";
+            SelectedTextColorUnified = Color.FromArgb(255, 255, 255);
+            SelectedTextColorUp = Color.FromArgb(255, 255, 255);
+            SelectedTextColorDown = Color.FromArgb(255, 255, 255);
+            UpdateColorButtonDisplay(btnColorTextBoth, isPt ? "Ambos" : "Both", SelectedTextColorUnified);
+            UpdateColorButtonDisplay(btnColorTextUp, "Upload ▲", SelectedTextColorUp);
+            UpdateColorButtonDisplay(btnColorTextDown, "Download ▼", SelectedTextColorDown);
+            if (rbTextUnified != null) rbTextUnified.Checked = true;
+            if (rbTextIndividual != null) rbTextIndividual.Checked = false;
+
+            SelectedUnitColorMode = "Inherit";
+            SelectedUnitColorUnified = Color.FromArgb(190, 190, 190);
+            SelectedUnitColorUp = Color.FromArgb(190, 190, 190);
+            SelectedUnitColorDown = Color.FromArgb(190, 190, 190);
+            UpdateColorButtonDisplay(btnColorUnitBoth, isPt ? "Unidade" : "Unit", SelectedUnitColorUnified);
+            UpdateColorButtonDisplay(btnColorUnitUp, isPt ? "Unidade Up" : "Unit Up", SelectedUnitColorUp);
+            UpdateColorButtonDisplay(btnColorUnitDown, isPt ? "Unidade Down" : "Unit Down", SelectedUnitColorDown);
+            if (rbUnitInherit != null) rbUnitInherit.Checked = true;
+            if (rbUnitUnified != null) rbUnitUnified.Checked = false;
+            if (rbUnitIndividual != null) rbUnitIndividual.Checked = false;
+
+            SelectedArrowColorMode = "Unified";
+            SelectedArrowColorUnified = Color.FromArgb(235, 235, 235);
+            SelectedArrowColorUp = Color.FromArgb(235, 235, 235);
+            SelectedArrowColorDown = Color.FromArgb(235, 235, 235);
+            UpdateColorButtonDisplay(btnColorArrowBoth, isPt ? "Ambas" : "Both", SelectedArrowColorUnified);
+            UpdateColorButtonDisplay(btnColorArrowUp, "Seta Up ▲", SelectedArrowColorUp);
+            UpdateColorButtonDisplay(btnColorArrowDown, "Seta Down ▼", SelectedArrowColorDown);
+            if (rbArrowUnified != null) rbArrowUnified.Checked = true;
+            if (rbArrowIndividual != null) rbArrowIndividual.Checked = false;
+
+            UpdateColorControlsState();
+
+            // 4. Ícones & Setas
+            SelectedIconTemplate = "VectorTriangle";
+            if (cbTemplate != null) cbTemplate.SelectedIndex = 0;
+
+            SelectedCustomUpChar = "▲";
+            SelectedCustomDownChar = "▼";
+            if (txtUp != null) txtUp.Text = "▲";
+            if (txtDown != null) txtDown.Text = "▼";
+            if (lblUp != null) { lblUp.Enabled = true; lblUp.ForeColor = clrTextSub; }
+            if (txtUp != null) txtUp.Enabled = false;
+            if (lblDown != null) { lblDown.Enabled = true; lblDown.ForeColor = clrTextSub; }
+            if (txtDown != null) txtDown.Enabled = false;
+
+            UpdateLanguageTexts();
+            if (pnlLivePreview != null) pnlLivePreview.Invalidate();
+            TriggerLiveTuning();
         }
 
         // ==============================================================================
@@ -3644,10 +4020,11 @@ namespace NetMonitor
             };
             card.Controls.Add(lblSecNum);
 
+            Panel pnlGrpText = new Panel { Location = new Point(205, 8), Size = new Size(295, 26), BackColor = Color.Transparent };
             rbTextUnified = new RadioButton
             {
                 Text = isPt ? "Unificado" : "Unified",
-                Location = new Point(210, 12),
+                Location = new Point(5, 4),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedTextColorMode == "Unified"
@@ -3655,13 +4032,14 @@ namespace NetMonitor
             rbTextIndividual = new RadioButton
             {
                 Text = isPt ? "Individual" : "Individual",
-                Location = new Point(310, 12),
+                Location = new Point(105, 4),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedTextColorMode == "Individual"
             };
-            card.Controls.Add(rbTextUnified);
-            card.Controls.Add(rbTextIndividual);
+            pnlGrpText.Controls.Add(rbTextUnified);
+            pnlGrpText.Controls.Add(rbTextIndividual);
+            card.Controls.Add(pnlGrpText);
 
             btnColorTextBoth = CreateColorButton(card, isPt ? "Ambos" : "Both", 18, 38, SelectedTextColorUnified, (col) => {
                 SelectedTextColorUnified = col;
@@ -3715,10 +4093,11 @@ namespace NetMonitor
             };
             card.Controls.Add(lblSecUnit);
 
+            Panel pnlGrpUnit = new Panel { Location = new Point(185, 94), Size = new Size(315, 26), BackColor = Color.Transparent };
             rbUnitInherit = new RadioButton
             {
                 Text = isPt ? "Igual Números" : "Match Numbers",
-                Location = new Point(190, 98),
+                Location = new Point(5, 4),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedUnitColorMode == "Inherit"
@@ -3726,7 +4105,7 @@ namespace NetMonitor
             rbUnitUnified = new RadioButton
             {
                 Text = isPt ? "Unificado" : "Unified",
-                Location = new Point(310, 98),
+                Location = new Point(125, 4),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedUnitColorMode == "Unified"
@@ -3734,14 +4113,15 @@ namespace NetMonitor
             rbUnitIndividual = new RadioButton
             {
                 Text = isPt ? "Individual" : "Individual",
-                Location = new Point(400, 98),
+                Location = new Point(215, 4),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedUnitColorMode == "Individual"
             };
-            card.Controls.Add(rbUnitInherit);
-            card.Controls.Add(rbUnitUnified);
-            card.Controls.Add(rbUnitIndividual);
+            pnlGrpUnit.Controls.Add(rbUnitInherit);
+            pnlGrpUnit.Controls.Add(rbUnitUnified);
+            pnlGrpUnit.Controls.Add(rbUnitIndividual);
+            card.Controls.Add(pnlGrpUnit);
 
             btnColorUnitBoth = CreateColorButton(card, isPt ? "Unidade" : "Unit", 18, 124, SelectedUnitColorUnified, (col) => {
                 SelectedUnitColorUnified = col;
@@ -3806,10 +4186,11 @@ namespace NetMonitor
             };
             card.Controls.Add(lblSecArr);
 
+            Panel pnlGrpArrow = new Panel { Location = new Point(205, 180), Size = new Size(295, 26), BackColor = Color.Transparent };
             rbArrowUnified = new RadioButton
             {
                 Text = isPt ? "Unificado" : "Unified",
-                Location = new Point(210, 184),
+                Location = new Point(5, 4),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedArrowColorMode == "Unified"
@@ -3817,13 +4198,14 @@ namespace NetMonitor
             rbArrowIndividual = new RadioButton
             {
                 Text = isPt ? "Individual" : "Individual",
-                Location = new Point(310, 184),
+                Location = new Point(105, 4),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedArrowColorMode == "Individual"
             };
-            card.Controls.Add(rbArrowUnified);
-            card.Controls.Add(rbArrowIndividual);
+            pnlGrpArrow.Controls.Add(rbArrowUnified);
+            pnlGrpArrow.Controls.Add(rbArrowIndividual);
+            card.Controls.Add(pnlGrpArrow);
 
             btnColorArrowBoth = CreateColorButton(card, isPt ? "Ambas" : "Both", 18, 210, SelectedArrowColorUnified, (col) => {
                 SelectedArrowColorUnified = col;
@@ -4184,9 +4566,11 @@ namespace NetMonitor
                 else SelectedIconTemplate = "UnicodeCustom";
 
                 bool isCustom = (idx == 5);
-                lblUp.Enabled = isCustom;
+                lblUp.Enabled = true;
+                lblUp.ForeColor = isCustom ? clrTextMain : clrTextSub;
                 txtUp.Enabled = isCustom;
-                lblDown.Enabled = isCustom;
+                lblDown.Enabled = true;
+                lblDown.ForeColor = isCustom ? clrTextMain : clrTextSub;
                 txtDown.Enabled = isCustom;
 
                 pnlLivePreview.Invalidate();
@@ -4194,9 +4578,11 @@ namespace NetMonitor
             };
 
             bool customInit = (cbTemplate.SelectedIndex == 5);
-            lblUp.Enabled = customInit;
+            lblUp.Enabled = true;
+            lblUp.ForeColor = customInit ? clrTextMain : clrTextSub;
             txtUp.Enabled = customInit;
-            lblDown.Enabled = customInit;
+            lblDown.Enabled = true;
+            lblDown.ForeColor = customInit ? clrTextMain : clrTextSub;
             txtDown.Enabled = customInit;
 
             Label lblNote = new Label
@@ -4406,7 +4792,8 @@ namespace NetMonitor
                 Location = new Point(left, top),
                 AutoSize = true,
                 ForeColor = clrTextMain,
-                Font = new Font("Segoe UI", 9.0f, FontStyle.Regular)
+                Font = new Font("Segoe UI", 9.0f, FontStyle.Regular),
+                UseMnemonic = false
             };
             parent.Controls.Add(lbl);
             return lbl;
