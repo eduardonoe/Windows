@@ -1,81 +1,80 @@
-# 📋 HANDOFF TÉCNICO: NetMonitor v1.0.0
+# 📋 HANDOFF TÉCNICO COMPLETO: NetMonitor v1.0.0
 **Data:** 23/10/2026  
-**Repositório:** `eduardonoe/windows` (pasta `D:\_Antigravity\NetMonitor`)  
-**Status Atual:** Compilado, instalado e rodando (PID ativo via `install.ps1`).
+**Repositório:** `eduardonoe/windows`  
+**Pasta Local:** `D:\_Antigravity\NetMonitor`  
+**Status:** Compilado e instalado em `%LOCALAPPDATA%\Programs\NetMonitor` (v1.0.0 travada).
 
 ---
 
-## 🔍 DIAGNÓSTICO DOS PROBLEMAS IDENTIFICADOS (Pontuação Cirúrgica)
+## 🔍 DIAGNÓSTICO DOS 5 PROBLEMAS PONTUADOS
 
-### 1. Colisão de RadioButtons em `card` (Causa Raiz da Pré-visualização de Cores)
-* **O que acontece:** No WinForms, todos os `RadioButton` adicionados diretamente ao mesmo container compartilham o mesmo grupo de exclusão mútua.
-* **No arquivo `NetMonitor.cs` (em `BuildPageCores`):**
-  - Seção 1 tem `rbTextUnified` e `rbTextIndividual`.
-  - Seção 2 tem `rbUnitInherit`, `rbUnitUnified` e `rbUnitIndividual`.
-  - Seção 3 tem `rbArrowUnified` e `rbArrowIndividual`.
-  Como todos foram adicionados direto em `card.Controls.Add(...)`, ao marcar `rbUnitInherit = true`, o WinForms **desmarca automaticamente** `rbTextIndividual` e `rbTextUnified`!
-* **Consequência visível:** No print do usuário, ambos os círculos de "1. Números da Velocidade" aparecem desmarcados (vazios).
-* **Impacto na Live Preview e na Barra:**
-  - `PnlLivePreview_Paint`:
-    ```csharp
-    Color cNumUp = rbTextIndividual.Checked ? btnColorTextUp.BackColor : btnColorTextBoth.BackColor;
-    ```
-    Como `rbTextIndividual.Checked` é falso, ele cai no fallback `btnColorTextBoth.BackColor` (branco `#FFFFFF`), ignorando as cores individuais do Upload (verde) e Download (vermelho).
-  - `TriggerLiveTuning`: Envia `SelectedTextColorMode = "Unified"`, fazendo o widget da barra forçar cor unificada branca e não aplicar as cores dos presets.
-* **Solução:** Isolar cada par/trio de RadioButtons em seu próprio mini-painel invisível ou `FlowLayoutPanel` (ex: `pnlGroupText`, `pnlGroupUnit`, `pnlGroupArrow`), garantindo independência total de grupos.
+### 1. Pré-visualização de Cores não atualiza (Live Preview & Barra de Tarefas)
+* **Causa Raiz:** No WinForms, todos os `RadioButton` adicionados diretamente a um mesmo container (`card.Controls.Add`) pertencem ao mesmo grupo de exclusão mútua.
+* **O que acontecia:**
+  - Seção 1 (Números): `rbTextUnified` e `rbTextIndividual`.
+  - Seção 2 (Unidades): `rbUnitInherit`, `rbUnitUnified` e `rbUnitIndividual`.
+  - Seção 3 (Setas): `rbArrowUnified` e `rbArrowIndividual`.
+  Ao selecionar qualquer opção de Unidade (ex: `rbUnitInherit = true`), o WinForms **desmarcava os botões de números** (`rbTextIndividual` e `rbTextUnified`).
+* **Consequência:**
+  - `rbTextIndividual.Checked` tornava-se `false`.
+  - `PnlLivePreview_Paint` caía no fallback de `btnColorTextBoth.BackColor` (branco `#FFFFFF`).
+  - `TriggerLiveTuning()` enviava modo `"Unified"` para a barra de tarefas, ignorando as cores dos botões de Upload e Download.
+* **Solução:** Isolar cada grupo em um mini-painel invisível (`pnlGrpText`, `pnlGrpUnit`, `pnlGrpArrow`) dentro do card.
 
 ---
 
-### 2. Texto Escuro/Ilegível na Aba "Ícones & Setas" (Tema Escuro)
-* **O que acontece:**
-  - Em `BuildPageIcones`:
-    ```csharp
-    bool isCustom = (idx == 5);
-    lblUp.Enabled = isCustom;
-    lblDown.Enabled = isCustom;
-    ```
-  - No WinForms, desabilitar um `Label` (`Enabled = false`) força a renderização nativa de texto cinza-escuro/preto do sistema (`SystemColors.GrayText`), que sobre o fundo escuro do card `#2A2A2E` fica quase invisível (como visto no segundo print).
-  - Além disso, no título `"Modelos de Ícones & Setas"`, o caractere `&` age como tecla de atalho de mnemônico no WinForms, ocultando o `&` se `UseMnemonic = false` não for especificado no Label.
+### 2. Protetor de Tela: "Buga e não aparece mais depois do Preview"
+* **Causa Raiz:**
+  - Ao abrir as Configurações de Proteção de Tela do Windows (`control desk.cpl,,@screensaver`), o Windows roda o protetor em modo mini-preview (ex: `Ribbons.scr`).
+  - Nossa rotina `IsAnyScreensaverActive()` verificava todos os processos do sistema buscando `.scr` ativo.
+  - Como `Ribbons.scr` fica rodando em segundo plano continuamente enquanto a janela de proteção de tela estiver aberta na máquina, `IsAnyScreensaverActive()` retornava `true` ininterruptamente!
+  - O NetMonitor assumia que o descanso de tela estava ativo de forma permanente e mantinha o widget invisível (`this.Visible = false; return;`).
 * **Solução:**
-  - Nunca desabilitar o `Label` (`lblUp.Enabled = true; lblDown.Enabled = true;`). Em vez disso, apenas esmaecer sua cor para `clrTextSub` quando inativo.
-  - Desabilitar apenas os `TextBox` (`txtUp.Enabled = isCustom; txtDown.Enabled = isCustom;`).
-  - Definir `UseMnemonic = false` nos labels que contêm `&`.
+  - Remover a varredura Toolhelp32 de processos `.scr` que captura previews indevidos.
+  - Utilizar a API oficial do Windows: `SystemParametersInfo(SPI_GETSCREENSAVERRUNNING, 0, ref ss, 0)`.
+  - Essa API retorna `true` **APENAS** quando o protetor de tela em tela cheia está de fato ativado e cobrindo o desktop, e volta para `false` no instante em que o usuário toca no mouse.
 
 ---
 
-### 3. Preset "Padrão Win11" Bugado
-* **O que acontece:**
-  - Ao clicar em "Padrão Win11", ele deve definir:
-    - Modo de texto: Unificado (`#FFFFFF`).
-    - Unidades: Herdar (`Inherit`).
-    - Setas: Unificado (`#EBEBEB`).
-  - Pela colisão de containers de RadioButtons citada no item 1, a seleção do modo unificado se desfaz e não atualiza corretamente as propriedades `SelectedTextColorMode` e `SelectedTextColorUnified`.
-* **Solução:** Com o isolamento dos grupos de RadioButtons, o preset aciona `rbTextUnified.Checked = true`, `rbUnitInherit.Checked = true` e `rbArrowUnified.Checked = true` sem que um desmarque o outro.
+### 3. Preset "Padrão Win11"
+* **Causa Raiz:** Efeito cascata da colisão de RadioButtons do item 1. Ao tentar ativar `rbTextUnified.Checked = true`, `rbUnitInherit.Checked = true` e `rbArrowUnified.Checked = true`, um desmarcava o outro sucessivamente.
+* **Solução:** Resolvido com os painéis isolados de cada seção.
 
 ---
 
-### 4. Botão "Redefinir Padrões" (Reset de Fábrica) Solicitado
-* **O que foi solicitado:** Um botão explícito para resetar para o padrão de fábrica da instalação.
-* **Onde adicionar:** Na barra inferior (`pnlBottom`) do `SettingsForm`, ao lado de Cancelar/Salvar:
-  - Botão: `btnResetDefaults` ("Redefinir" / "Reset").
-  - Ação ao clicar: Restaura todos os valores de fábrica originais:
-    - Idioma: `pt` (ou sistema)
+### 4. Texto Escuro na Aba "Ícones & Setas" (Tema Escuro)
+* **Causa Raiz:**
+  - Em `BuildPageIcones`, o código executava `lblUp.Enabled = isCustom; lblDown.Enabled = isCustom;`.
+  - No WinForms, um `Label` desabilitado pinta o texto com a cor nativa `SystemColors.GrayText` (cinza escuro opaco), ficando praticamente preto e ilegível sobre o fundo escuro `#2A2A2E`.
+  - O título `Modelos de Ícones Setas` perdeu o `&` porque no WinForms o caractere `&` vira tecla de atalho de mnemônico por falta de `UseMnemonic = false`.
+* **Solução:**
+  - Manter os labels sempre habilitados (`Enabled = true`), apenas mudando a cor para `clrTextSub` quando o campo estiver desativado.
+  - Desabilitar apenas os campos de entrada `TextBox` (`txtUp.Enabled = isCustom; txtDown.Enabled = isCustom;`).
+  - Ativar `UseMnemonic = false` nos labels que possuem o caractere `&`.
+
+---
+
+### 5. Botão "Redefinir Padrões" (Reset para Padrão de Fábrica)
+* **Demanda:** O usuário pediu um botão para restaurar instantaneamente as configurações para o padrão original da instalação.
+* **Onde adicionar:** No rodapé `pnlBottom` (ou na aba Geral), ao lado de Cancelar:
+  - Botão `btnResetDefaults` ("Redefinir Padrões" / "Reset").
+  - Restaura:
+    - Idioma: `pt`
     - Formato: `Bits` (Mbps / Kbps)
     - Unidade: `Auto`
-    - Posição Setas: À Direita (`ArrowOnRight = true`)
+    - Posição Setas: À Direita (`true`)
     - Ícones: `VectorTriangle`
-    - Fonte: `Segoe UI Variable Display`, 9.5 pt, Bold
+    - Tipografia: `Segoe UI Variable Display`, 9.5 pt, Bold
     - Cores de Texto: `Unified`, `#FFFFFF`
     - Unidades: `Inherit`
     - Setas: `Unified`, `#EBEBEB`
-    - Atualiza os controles na tela, chama `pnlLivePreview.Invalidate()` e `TriggerLiveTuning()`.
+  - Atualiza todos os controles na tela, chama `pnlLivePreview.Invalidate()` e `TriggerLiveTuning()`.
 
 ---
 
-## 🛠️ ARQUIVOS E SCRIPTS RELEVANTES
-* **Código Principal:** [`src/NetMonitor.cs`](file:///D:/_Antigravity/NetMonitor/src/NetMonitor.cs)
-* **Compilação:** [`build.ps1`](file:///D:/_Antigravity/NetMonitor/build.ps1)
-* **Instalação:** [`scripts/install.ps1`](file:///D:/_Antigravity/NetMonitor/scripts/install.ps1)
-* **Desinstalação:** [`scripts/uninstall.ps1`](file:///D:/_Antigravity/NetMonitor/scripts/uninstall.ps1)
-* **Upload Drive:** [`scripts/upload_to_drive.ps1`](file:///D:/_Antigravity/NetMonitor/scripts/upload_to_drive.ps1)
-* **Versão Trava:** Estritamente **`1.0.0`** (SemVer Sem Alteração de Versão).
+## 🛠️ SCRIPTS DE AUTOMAÇÃO
+* **Compilar:** `powershell -ExecutionPolicy Bypass -File "D:\_Antigravity\NetMonitor\build.ps1"`
+* **Instalar:** `powershell -ExecutionPolicy Bypass -File "D:\_Antigravity\NetMonitor\scripts\install.ps1"`
+* **Desinstalar:** `powershell -ExecutionPolicy Bypass -File "D:\_Antigravity\NetMonitor\scripts\uninstall.ps1"`
+* **Sincronizar Drive:** `powershell -ExecutionPolicy Bypass -File "D:\_Antigravity\NetMonitor\scripts\upload_to_drive.ps1"`
+* **Versão:** Manter rigorosamente **`1.0.0`**.
