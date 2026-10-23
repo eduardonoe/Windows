@@ -653,6 +653,22 @@ namespace NetMonitor
             return false;
         }
 
+        private Color EnsureLegibleContrast(Color c, Color bg)
+        {
+            double lumC = 0.299 * c.R + 0.587 * c.G + 0.114 * c.B;
+            double lumBg = 0.299 * bg.R + 0.587 * bg.G + 0.114 * bg.B;
+
+            if (lumBg < 128 && lumC < 90)
+            {
+                return Color.FromArgb(245, 245, 245);
+            }
+            if (lumBg >= 128 && lumC > 175)
+            {
+                return Color.FromArgb(25, 25, 25);
+            }
+            return c;
+        }
+
         private void UpdateCachedGdiResources()
         {
             if (brushNumUp != null) brushNumUp.Dispose();
@@ -695,6 +711,13 @@ namespace NetMonitor
 
             Color cArrUp = (arrowColorMode == "Individual") ? arrowColorUp : arrowColorUnified;
             Color cArrDown = (arrowColorMode == "Individual") ? arrowColorDown : arrowColorUnified;
+
+            cNumUp = EnsureLegibleContrast(cNumUp, currentBgColor);
+            cNumDown = EnsureLegibleContrast(cNumDown, currentBgColor);
+            cUnitUp = EnsureLegibleContrast(cUnitUp, currentBgColor);
+            cUnitDown = EnsureLegibleContrast(cUnitDown, currentBgColor);
+            cArrUp = EnsureLegibleContrast(cArrUp, currentBgColor);
+            cArrDown = EnsureLegibleContrast(cArrDown, currentBgColor);
 
             brushNumUp = new SolidBrush(cNumUp);
             brushNumDown = new SolidBrush(cNumDown);
@@ -1580,7 +1603,23 @@ namespace NetMonitor
 
             // 7. Sair / Exit
             ToolStripMenuItem mnuExit = new ToolStripMenuItem(isPt ? "Sair" : "Exit");
-            mnuExit.Click += (s, e) => Application.Exit();
+            mnuExit.Click += (s, e) =>
+            {
+                try
+                {
+                    HideFlyout();
+                    if (flyoutForm != null && !flyoutForm.IsDisposed)
+                    {
+                        flyoutForm.Dispose();
+                        flyoutForm = null;
+                    }
+                    this.Close();
+                }
+                catch
+                {
+                    Environment.Exit(0);
+                }
+            };
             contextMenu.Items.Add(mnuExit);
         }
 
@@ -1817,23 +1856,32 @@ namespace NetMonitor
             {
                 HideFlyout();
                 Screen scr = Screen.FromControl(this);
-                Rectangle wa = scr.WorkingArea;
-                Point pt = Cursor.Position;
+                if (scr == null) scr = Screen.PrimaryScreen;
+                Rectangle b = scr.Bounds;
 
-                int mnuW = Math.Max(220, contextMenu.Width);
-                int mnuH = Math.Max(320, contextMenu.Height);
+                Size pref = contextMenu.PreferredSize;
+                int mnuW = pref.Width > 0 ? pref.Width : (contextMenu.Width > 0 ? contextMenu.Width : 220);
+                int mnuH = pref.Height > 0 ? pref.Height : (contextMenu.Height > 0 ? contextMenu.Height : 260);
 
-                // Clamping estrito em todos os 4 lados (nunca vaza para outro monitor)
-                pt.X = Math.Max(wa.Left + 4, Math.Min(wa.Right - mnuW - 4, pt.X));
-                pt.Y = Math.Max(wa.Top + 4, Math.Min(wa.Bottom - mnuH - 4, pt.Y));
+                // Ancorado diretamente sobre o widget na barra de tarefas
+                int x = this.Left;
+                if (x + mnuW > b.Right - 4) x = b.Right - mnuW - 4;
+                if (x < b.Left + 4) x = b.Left + 4;
 
-                contextMenu.Show(pt);
+                int y = this.Top - mnuH - 2;
+                if (y < b.Top + 4)
+                {
+                    y = this.Bottom + 2;
+                }
+
+                contextMenu.Show(x, y);
             }
         }
 
         private void OnWidgetMouseEnter(object sender, EventArgs e)
         {
             if (!showHoverFlyout || isSettingsDialogOpen || isScreensaverRunning || isSessionLocked) return;
+            if (contextMenu != null && contextMenu.Visible) return;
             ShowFlyout();
         }
 
@@ -2263,6 +2311,14 @@ namespace NetMonitor
                 try { SetProcessDPIAware(); } catch { }
             }
 
+            try
+            {
+                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+                AppDomain.CurrentDomain.UnhandledException += (s, e) => { };
+                Application.ThreadException += (s, e) => { };
+            }
+            catch { }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new NetMonitorApp());
@@ -2669,6 +2725,16 @@ namespace NetMonitor
         private Button btnColorArrowUp;
         private Button btnColorArrowDown;
 
+        // Presets de Cores
+        private Button btnPresetCiano;
+        private Button btnPresetClassico;
+        private Button btnPresetPadrao;
+        private Button btnPresetMono;
+        private int currentPageIndex = 0;
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
         // Controles: Ícones
         private ComboBox cbTemplate;
         private TextBox txtUp;
@@ -2819,41 +2885,148 @@ namespace NetMonitor
             }
         }
 
+        private void UpdateTitleBarTheme(bool darkNow)
+        {
+            try
+            {
+                int val = darkNow ? 1 : 0;
+                DwmSetWindowAttribute(this.Handle, 20, ref val, sizeof(int));
+            }
+            catch { }
+        }
+
+        private void ApplyThemeRecursively(Control root, bool darkNow)
+        {
+            if (root == null) return;
+            foreach (Control c in root.Controls)
+            {
+                Label lbl = c as Label;
+                if (lbl != null)
+                {
+                    if (lbl == lblHeaderTitle)
+                    {
+                        lbl.ForeColor = clrTextMain;
+                    }
+                    else if (lbl == lblHeaderSubtitle)
+                    {
+                        lbl.ForeColor = clrTextSub;
+                    }
+                    else if (lbl == lblPrevTitle || lbl.Font.Bold)
+                    {
+                        lbl.ForeColor = clrAccent;
+                    }
+                    else if (lbl.Font.Size < 8.5f)
+                    {
+                        lbl.ForeColor = clrTextSub;
+                    }
+                    else
+                    {
+                        lbl.ForeColor = clrTextMain;
+                    }
+                }
+                else
+                {
+                    RadioButton rb = c as RadioButton;
+                    if (rb != null)
+                    {
+                        rb.ForeColor = clrTextMain;
+                    }
+                    else
+                    {
+                        CheckBox cb = c as CheckBox;
+                        if (cb != null)
+                        {
+                            cb.ForeColor = cb.Font.Bold ? clrAccent : clrTextMain;
+                        }
+                        else
+                        {
+                            ComboBox cmb = c as ComboBox;
+                            if (cmb != null)
+                            {
+                                cmb.BackColor = clrInputBg;
+                                cmb.ForeColor = clrTextMain;
+                            }
+                            else
+                            {
+                                TextBox tb = c as TextBox;
+                                if (tb != null)
+                                {
+                                    tb.BackColor = clrInputBg;
+                                    tb.ForeColor = clrTextMain;
+                                }
+                                else
+                                {
+                                    Panel p = c as Panel;
+                                    if (p != null)
+                                    {
+                                        if (p.Height == 1)
+                                        {
+                                            p.BackColor = clrBorder;
+                                        }
+                                        else if (p == pnlPageGeral || p == pnlPageFonte || p == pnlPageCores || p == pnlPageIcones)
+                                        {
+                                            p.BackColor = clrCardBg;
+                                        }
+                                        else if (p == pnlLivePreview)
+                                        {
+                                            p.BackColor = darkNow ? NetMonitorApp.BG_COLOR_DARK : NetMonitorApp.BG_COLOR_LIGHT;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        Button btn = c as Button;
+                                        if (btn != null)
+                                        {
+                                            string tagStr = btn.Tag as string;
+                                            if (tagStr == "ColorSwatch")
+                                            {
+                                                btn.FlatAppearance.BorderColor = clrBorder;
+                                            }
+                                            else if (tagStr == "PresetBtn")
+                                            {
+                                                btn.BackColor = clrCardBg;
+                                                btn.ForeColor = clrTextMain;
+                                                btn.FlatAppearance.BorderColor = clrBorder;
+                                            }
+                                            else if (btn == btnCancel)
+                                            {
+                                                btn.BackColor = clrCardBg;
+                                                btn.ForeColor = clrTextMain;
+                                                btn.FlatAppearance.BorderColor = clrBorder;
+                                            }
+                                            else if (btn == btnSave)
+                                            {
+                                                btn.BackColor = clrAccent;
+                                                btn.ForeColor = Color.White;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (c.HasChildren)
+                {
+                    ApplyThemeRecursively(c, darkNow);
+                }
+            }
+        }
+
         public void ApplyDynamicTheme(bool darkNow)
         {
             isDarkTheme = darkNow;
             SetupThemeColors();
+            UpdateTitleBarTheme(darkNow);
 
             this.BackColor = clrFormBg;
             if (pnlSidebar != null) pnlSidebar.BackColor = clrSidebarBg;
             if (pnlMainContent != null) pnlMainContent.BackColor = clrFormBg;
             if (pnlBottom != null) pnlBottom.BackColor = clrFormBg;
 
-            if (lblHeaderTitle != null) lblHeaderTitle.ForeColor = clrTextMain;
-            if (lblHeaderSubtitle != null) lblHeaderSubtitle.ForeColor = clrTextSub;
-
-            Panel[] pages = new Panel[] { pnlPageGeral, pnlPageFonte, pnlPageCores, pnlPageIcones };
-            foreach (var p in pages)
-            {
-                if (p != null)
-                {
-                    p.BackColor = clrCardBg;
-                    p.Invalidate();
-                }
-            }
-
-            if (btnCancel != null)
-            {
-                btnCancel.BackColor = clrCardBg;
-                btnCancel.ForeColor = clrTextMain;
-                btnCancel.FlatAppearance.BorderColor = clrBorder;
-            }
-
-            if (pnlLivePreview != null)
-            {
-                pnlLivePreview.BackColor = isDarkTheme ? NetMonitorApp.BG_COLOR_DARK : NetMonitorApp.BG_COLOR_LIGHT;
-                pnlLivePreview.Invalidate();
-            }
+            ApplyThemeRecursively(this, darkNow);
+            SwitchPage(currentPageIndex);
 
             this.Invalidate(true);
         }
@@ -3111,6 +3284,7 @@ namespace NetMonitor
 
         private void SwitchPage(int index)
         {
+            currentPageIndex = index;
             bool isPt = SelectedLanguage == "pt";
             pnlPageGeral.Visible = (index == 0);
             pnlPageFonte.Visible = (index == 1);
@@ -3336,6 +3510,10 @@ namespace NetMonitor
             btnCancel.Text = isPt ? "Cancelar" : "Cancel";
             lblPrevTitle.Text = isPt ? "PRÉ-VISUALIZAÇÃO AO VIVO" : "LIVE PREVIEW";
             lblPrevDesc.Text = isPt ? "Atualização instantânea na barra de tarefas e no painel." : "Instant live update on taskbar and settings panel.";
+            if (btnPresetCiano != null) btnPresetCiano.Text = isPt ? "Ciano & Verde" : "Cyan & Green";
+            if (btnPresetClassico != null) btnPresetClassico.Text = isPt ? "Clássico Rede" : "Classic Net";
+            if (btnPresetPadrao != null) btnPresetPadrao.Text = isPt ? "Padrão Win11" : "Win11 Default";
+            if (btnPresetMono != null) btnPresetMono.Text = isPt ? "Monocromático" : "Monochrome";
             SwitchPage(pnlPageGeral.Visible ? 0 : pnlPageFonte.Visible ? 1 : pnlPageCores.Visible ? 2 : 3);
         }
 
@@ -3682,19 +3860,188 @@ namespace NetMonitor
                 TriggerLiveTuning();
             };
 
+            // Divisor 3
+            Panel div3 = new Panel { Location = new Point(18, 256), Size = new Size(card.Width - 36, 1), BackColor = clrBorder };
+            card.Controls.Add(div3);
+
+            // -------------------------------------------------------------
+            // Seção 4: Presets Rápidos
+            // -------------------------------------------------------------
+            Label lblSecPresets = new Label
+            {
+                Text = isPt ? "4. Presets Rápidos:" : "4. Quick Presets:",
+                Font = new Font("Segoe UI", 9.0f, FontStyle.Bold),
+                ForeColor = clrAccent,
+                Location = new Point(18, 266),
+                AutoSize = true
+            };
+            card.Controls.Add(lblSecPresets);
+
+            btnPresetCiano = new Button
+            {
+                Text = isPt ? "Ciano & Verde" : "Cyan & Green",
+                Location = new Point(18, 290),
+                Size = new Size(112, 32),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.0f, FontStyle.Regular),
+                BackColor = clrCardBg,
+                ForeColor = clrTextMain,
+                Cursor = Cursors.Hand,
+                Tag = "PresetBtn"
+            };
+            btnPresetCiano.FlatAppearance.BorderColor = clrBorder;
+            btnPresetCiano.Click += (s, e) => ApplyPreset("CianoVerde", isPt);
+            card.Controls.Add(btnPresetCiano);
+
+            btnPresetClassico = new Button
+            {
+                Text = isPt ? "Clássico Rede" : "Classic Net",
+                Location = new Point(138, 290),
+                Size = new Size(112, 32),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.0f, FontStyle.Regular),
+                BackColor = clrCardBg,
+                ForeColor = clrTextMain,
+                Cursor = Cursors.Hand,
+                Tag = "PresetBtn"
+            };
+            btnPresetClassico.FlatAppearance.BorderColor = clrBorder;
+            btnPresetClassico.Click += (s, e) => ApplyPreset("ClassicoRede", isPt);
+            card.Controls.Add(btnPresetClassico);
+
+            btnPresetPadrao = new Button
+            {
+                Text = isPt ? "Padrão Win11" : "Win11 Default",
+                Location = new Point(258, 290),
+                Size = new Size(112, 32),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.0f, FontStyle.Regular),
+                BackColor = clrCardBg,
+                ForeColor = clrTextMain,
+                Cursor = Cursors.Hand,
+                Tag = "PresetBtn"
+            };
+            btnPresetPadrao.FlatAppearance.BorderColor = clrBorder;
+            btnPresetPadrao.Click += (s, e) => ApplyPreset("PadraoWin11", isPt);
+            card.Controls.Add(btnPresetPadrao);
+
+            btnPresetMono = new Button
+            {
+                Text = isPt ? "Monocromático" : "Monochrome",
+                Location = new Point(378, 290),
+                Size = new Size(112, 32),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.0f, FontStyle.Regular),
+                BackColor = clrCardBg,
+                ForeColor = clrTextMain,
+                Cursor = Cursors.Hand,
+                Tag = "PresetBtn"
+            };
+            btnPresetMono.FlatAppearance.BorderColor = clrBorder;
+            btnPresetMono.Click += (s, e) => ApplyPreset("Monocromatico", isPt);
+            card.Controls.Add(btnPresetMono);
+
             Label lblColorTip = new Label
             {
                 Text = isPt ?
-                    "Clique sobre qualquer botão colorido para abrir o seletor visual e ajustar a cor exata." :
-                    "Click on any color button to open the visual palette dialog.",
+                    "Clique em um preset acima para aplicar instantaneamente, ou personalize nos botões." :
+                    "Click a preset above to apply instantly, or customize using the buttons above.",
                 Font = new Font("Segoe UI", 7.5f, FontStyle.Regular),
                 ForeColor = clrTextSub,
-                Location = new Point(18, 260),
+                Location = new Point(18, 332),
                 AutoSize = true
             };
             card.Controls.Add(lblColorTip);
 
             UpdateColorControlsState();
+        }
+
+        private void UpdateColorButtonDisplay(Button btn, string title, Color col)
+        {
+            if (btn == null) return;
+            btn.BackColor = col;
+            btn.ForeColor = GetContrastTextColor(col);
+            btn.Text = string.Format("{0}\n{1}", title, NetMonitorApp.ColorToHex(col));
+        }
+
+        private void ApplyPreset(string presetName, bool isPt)
+        {
+            if (presetName == "CianoVerde")
+            {
+                rbTextIndividual.Checked = true;
+                SelectedTextColorMode = "Individual";
+                SelectedTextColorUp = ColorTranslator.FromHtml("#00E5FF");
+                SelectedTextColorDown = ColorTranslator.FromHtml("#00E676");
+                UpdateColorButtonDisplay(btnColorTextUp, "Upload ▲", SelectedTextColorUp);
+                UpdateColorButtonDisplay(btnColorTextDown, "Download ▼", SelectedTextColorDown);
+
+                rbArrowIndividual.Checked = true;
+                SelectedArrowColorMode = "Individual";
+                SelectedArrowColorUp = SelectedTextColorUp;
+                SelectedArrowColorDown = SelectedTextColorDown;
+                UpdateColorButtonDisplay(btnColorArrowUp, "Seta Up ▲", SelectedArrowColorUp);
+                UpdateColorButtonDisplay(btnColorArrowDown, "Seta Down ▼", SelectedArrowColorDown);
+
+                rbUnitInherit.Checked = true;
+                SelectedUnitColorMode = "Inherit";
+            }
+            else if (presetName == "ClassicoRede")
+            {
+                rbTextIndividual.Checked = true;
+                SelectedTextColorMode = "Individual";
+                SelectedTextColorUp = ColorTranslator.FromHtml("#00E676");
+                SelectedTextColorDown = ColorTranslator.FromHtml("#FF5252");
+                UpdateColorButtonDisplay(btnColorTextUp, "Upload ▲", SelectedTextColorUp);
+                UpdateColorButtonDisplay(btnColorTextDown, "Download ▼", SelectedTextColorDown);
+
+                rbArrowIndividual.Checked = true;
+                SelectedArrowColorMode = "Individual";
+                SelectedArrowColorUp = SelectedTextColorUp;
+                SelectedArrowColorDown = SelectedTextColorDown;
+                UpdateColorButtonDisplay(btnColorArrowUp, "Seta Up ▲", SelectedArrowColorUp);
+                UpdateColorButtonDisplay(btnColorArrowDown, "Seta Down ▼", SelectedArrowColorDown);
+
+                rbUnitInherit.Checked = true;
+                SelectedUnitColorMode = "Inherit";
+            }
+            else if (presetName == "PadraoWin11")
+            {
+                rbTextUnified.Checked = true;
+                SelectedTextColorMode = "Unified";
+                SelectedTextColorUnified = Color.FromArgb(255, 255, 255);
+                UpdateColorButtonDisplay(btnColorTextBoth, isPt ? "Ambos" : "Both", SelectedTextColorUnified);
+
+                rbArrowUnified.Checked = true;
+                SelectedArrowColorMode = "Unified";
+                SelectedArrowColorUnified = Color.FromArgb(235, 235, 235);
+                UpdateColorButtonDisplay(btnColorArrowBoth, isPt ? "Ambas" : "Both", SelectedArrowColorUnified);
+
+                rbUnitInherit.Checked = true;
+                SelectedUnitColorMode = "Inherit";
+            }
+            else if (presetName == "Monocromatico")
+            {
+                rbTextIndividual.Checked = true;
+                SelectedTextColorMode = "Individual";
+                SelectedTextColorUp = Color.FromArgb(255, 255, 255);
+                SelectedTextColorDown = Color.FromArgb(176, 176, 176);
+                UpdateColorButtonDisplay(btnColorTextUp, "Upload ▲", SelectedTextColorUp);
+                UpdateColorButtonDisplay(btnColorTextDown, "Download ▼", SelectedTextColorDown);
+
+                rbArrowIndividual.Checked = true;
+                SelectedArrowColorMode = "Individual";
+                SelectedArrowColorUp = SelectedTextColorUp;
+                SelectedArrowColorDown = SelectedTextColorDown;
+                UpdateColorButtonDisplay(btnColorArrowUp, "Seta Up ▲", SelectedArrowColorUp);
+                UpdateColorButtonDisplay(btnColorArrowDown, "Seta Down ▼", SelectedArrowColorDown);
+
+                rbUnitInherit.Checked = true;
+                SelectedUnitColorMode = "Inherit";
+            }
+
+            UpdateColorControlsState();
+            if (pnlLivePreview != null) pnlLivePreview.Invalidate();
+            TriggerLiveTuning();
         }
 
         private void UpdateColorControlsState()
@@ -3736,7 +4083,8 @@ namespace NetMonitor
                 Font = new Font("Segoe UI", 8.0f, FontStyle.Bold),
                 BackColor = initialColor,
                 ForeColor = GetContrastTextColor(initialColor),
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                Tag = "ColorSwatch"
             };
             btn.FlatAppearance.BorderColor = clrBorder;
             btn.Click += (s, e) =>
