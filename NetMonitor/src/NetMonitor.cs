@@ -4,18 +4,21 @@
 // Version: 1.0.0
 //
 // v1.0.0 changelog:
-// - Arquitetura Proposta B: Menu de Configurações com Sidebar Lateral nativo Windows 11.
-// - Seleção independente de cores para: Números, Unidades (Kbps/Mbps/MB/s) e Setas de Tráfego.
-// - Suporte completo à alternância entre Bits (Mbps / Kbps / Gbps) e Bytes (MB/s / KB/s / GB/s), padrão Bits.
-// - Padrão de fábrica calibrado: Segoe UI Variable Display, 9.5 pt Bold, Setas à Direita.
-// - Novos modelos de setas: Chevrons Duplos Velocidade (▲▲/▼▼) e Stream Tech 45° (↗/↘).
-// - Auto-ocultação no Screensaver e na Tela de Bloqueio do Windows (SessionSwitch + SPI_GETSCREENSAVERRUNNING).
-// - Proteção estrita contra invasão de tela em múltiplos monitores (Clamp no monitor ativo).
-// - Desempenho extremo: Cache de Brushes/Pens GDI+ e supressão de Invalidate() ocioso (0% CPU, RAM mínima).
+// - Top 5 Aplicativos com maior consumo de rede em tempo real no Mouse Hover (Flyout Fluente Windows 11).
+// - Reordenação dinâmica instantânea a cada segundo com identificação individual de subprocessos e abas.
+// - Multi-monitor e multi-resolução à prova de vazamento com clamping estrito de coordenadas e tratamento de WM_DISPLAYCHANGE.
+// - Atualização em Tempo Real (Live Tuning): todas as alterações refletem instantaneamente no widget.
+// - Arquitetura Proposta B: Sidebar lateral nativa Windows 11 com coordenadas absolutas e zero sobreposição.
+// - Troca de tema dinâmico em tempo real (Dark / Light) com o formulário de configurações aberto na tela.
+// - Auto-ocultação à prova de falhas em descanso de tela / screensaver (Toolhelp32 .scr nativo + SPI).
+// - Detecção automática do idioma nativo do sistema operacional (Português / Inglês).
+// - Colorização totalmente independente: Números, Unidades (Kbps/Mbps/MB/s) e Setas de Tráfego.
+// - Alternância entre medição em Bits (Mbps / Kbps / Gbps) e Bytes (MB/s / KB/s / GB/s), padrão Bits.
 // ==============================================================================
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
@@ -23,8 +26,11 @@ using System.Globalization;
 using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using Timer = System.Windows.Forms.Timer;
 
 [assembly: AssemblyTitle("NetMonitor")]
 [assembly: AssemblyDescription("Monitor de Rede Ultraleve para Barra de Tarefas do Windows 11")]
@@ -45,7 +51,7 @@ namespace NetMonitor
         private static extern IntPtr SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
 
         [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+        public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr FindWindowEx(IntPtr parentHandle, IntPtr childAfter, string className, string windowTitle);
@@ -77,7 +83,108 @@ namespace NetMonitor
         private static extern bool SetProcessDPIAware();
 
         [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool SystemParametersInfo(uint uiAction, uint uiParam, ref bool pvParam, uint fWinIni);
+        public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, ref bool pvParam, uint fWinIni);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        public static extern bool Process32First(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        public static extern bool Process32Next(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr OpenProcess(uint processAccess, bool bInheritHandle, int processId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetProcessIoCounters(IntPtr ProcessHandle, out IO_COUNTERS IoCounters);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern uint QueryFullProcessImageName(IntPtr hProcess, int flags, StringBuilder text, ref int size);
+
+        [DllImport("iphlpapi.dll", SetLastError = true)]
+        public static extern uint GetExtendedTcpTable(IntPtr pTcpTable, ref int pdwSize, bool bOrder, int ulAf, int tableClass, uint reserved);
+
+        [DllImport("iphlpapi.dll", SetLastError = true)]
+        public static extern uint GetExtendedUdpTable(IntPtr pUdpTable, ref int pdwSize, bool bOrder, int ulAf, int tableClass, uint reserved);
+
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        public struct PROCESSENTRY32
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ProcessID;
+            public IntPtr th32DefaultHeapID;
+            public uint th32ModuleID;
+            public uint cntThreads;
+            public uint th32ParentProcessID;
+            public int pcPriClassBase;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szExeFile;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct IO_COUNTERS
+        {
+            public ulong ReadOperationCount;
+            public ulong WriteOperationCount;
+            public ulong OtherOperationCount;
+            public ulong ReadTransferCount;
+            public ulong WriteTransferCount;
+            public ulong OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MIB_TCPROW_OWNER_PID
+        {
+            public uint state;
+            public uint localAddr;
+            public byte localPort1, localPort2, localPort3, localPort4;
+            public uint remoteAddr;
+            public byte remotePort1, remotePort2, remotePort3, remotePort4;
+            public int owningPid;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MIB_TCP6ROW_OWNER_PID
+        {
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+            public byte[] ucLocalAddr;
+            public uint dwLocalScopeId;
+            public byte localPort1, localPort2, localPort3, localPort4;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+            public byte[] ucRemoteAddr;
+            public uint dwRemoteScopeId;
+            public byte remotePort1, remotePort2, remotePort3, remotePort4;
+            public uint state;
+            public int owningPid;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MIB_UDPROW_OWNER_PID
+        {
+            public uint localAddr;
+            public byte localPort1, localPort2, localPort3, localPort4;
+            public int owningPid;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MIB_UDP6ROW_OWNER_PID
+        {
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+            public byte[] ucLocalAddr;
+            public uint dwLocalScopeId;
+            public byte localPort1, localPort2, localPort3, localPort4;
+            public int owningPid;
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT
@@ -103,6 +210,7 @@ namespace NetMonitor
         private const int WM_NCLBUTTONDOWN = 0xA1;
         private const int HT_CAPTION = 0x2;
         private const int WM_WINDOWPOSCHANGING = 0x0046;
+        private const int WM_DISPLAYCHANGE = 0x007E;
         private const int GWLP_HWNDPARENT = -8;
 
         private const int WS_EX_TOOLWINDOW = 0x00000080;
@@ -115,8 +223,17 @@ namespace NetMonitor
         private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_SHOWWINDOW = 0x0040;
+        private const uint SWP_HIDEWINDOW = 0x0080;
 
-        private const uint SPI_GETSCREENSAVERRUNNING = 0x0072;
+        public const uint SPI_GETSCREENSAVERRUNNING = 0x0072;
+        private const uint TH32CS_SNAPPROCESS = 0x00000002;
+        private const int AF_INET = 2;
+        private const int AF_INET6 = 23;
+        private const int TCP_TABLE_OWNER_PID_ALL = 5;
+        private const int UDP_TABLE_OWNER_PID = 1;
+        private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        private const int DWMWCP_ROUND = 2;
 
         private const string REG_KEY_APP = @"Software\NetMonitor";
         private const string REG_KEY_RUN = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -127,8 +244,8 @@ namespace NetMonitor
         private const int WIDGET_HEIGHT = 38;
 
         // Paleta base do widget
-        private static readonly Color BG_COLOR_DARK = Color.FromArgb(28, 28, 28);
-        private static readonly Color BG_COLOR_LIGHT = Color.FromArgb(243, 243, 243);
+        public static readonly Color BG_COLOR_DARK = Color.FromArgb(28, 28, 28);
+        public static readonly Color BG_COLOR_LIGHT = Color.FromArgb(243, 243, 243);
         private Color currentBgColor = Color.FromArgb(28, 28, 28);
         private bool followSystemTheme = true;
         private bool lastThemeIsDark = true;
@@ -142,19 +259,19 @@ namespace NetMonitor
         private Font fontUnicode;
 
         // Cores dos Números
-        private string textColorMode = "Unified";    // "Unified" ou "Individual"
+        private string textColorMode = "Unified";
         private Color textColorUnified = Color.FromArgb(255, 255, 255);
         private Color textColorUp = Color.FromArgb(255, 255, 255);
         private Color textColorDown = Color.FromArgb(255, 255, 255);
 
         // Cores das Unidades (Kbps / Mbps / MB/s)
-        private string unitColorMode = "Inherit";    // "Inherit", "Unified", ou "Individual"
+        private string unitColorMode = "Inherit";
         private Color unitColorUnified = Color.FromArgb(190, 190, 190);
         private Color unitColorUp = Color.FromArgb(190, 190, 190);
         private Color unitColorDown = Color.FromArgb(190, 190, 190);
 
         // Cores das Setas
-        private string arrowColorMode = "Unified";   // "Unified" ou "Individual"
+        private string arrowColorMode = "Unified";
         private Color arrowColorUnified = Color.FromArgb(235, 235, 235);
         private Color arrowColorUp = Color.FromArgb(235, 235, 235);
         private Color arrowColorDown = Color.FromArgb(235, 235, 235);
@@ -178,8 +295,8 @@ namespace NetMonitor
         private string selectedNicId = "Auto";
         private string activeNicDisplayName = "Auto";
         private string currentLanguage = "pt";
-        private string speedUnitFormat = "Bits";      // "Bits" (Mbps/Kbps/Gbps) ou "Bytes" (MB/s/KB/s/GB/s)
-        private string unitMode = "Auto";             // "Auto", ou fixa
+        private string speedUnitFormat = "Bits";      // "Bits" ou "Bytes"
+        private string unitMode = "Auto";             // "Auto" ou fixa
         private bool arrowOnRight = true;             // Seta à direita por padrão
         private bool isLocked = false;                // Trava de posição
         private bool hideOnScreensaver = true;        // Ocultar em screensaver / lock screen
@@ -190,6 +307,7 @@ namespace NetMonitor
         // Estado do Screensaver / Sessão
         private bool isSessionLocked = false;
         private bool isScreensaverRunning = false;
+        private bool isSettingsDialogOpen = false;
 
         // Medição e Cache de Tráfego
         private Timer updateTimer;
@@ -208,6 +326,15 @@ namespace NetMonitor
         private ContextMenuStrip contextMenu;
         private NotifyIcon trayIcon;
 
+        // Hover Flyout (Top 5 Apps por Consumo de Rede em Tempo Real)
+        public bool showHoverFlyout = true;
+        private NetworkTopProcessesFlyout flyoutForm;
+        private Timer hoverCheckTimer;
+        private Timer processSampleTimer;
+        private bool isHoverSampling = false;
+        private Dictionary<int, ulong> lastProcessIo = new Dictionary<int, ulong>();
+        private Dictionary<int, string> cachedProcessNames = new Dictionary<int, string>();
+
         public NetMonitorApp()
         {
             InitializeComponent();
@@ -219,6 +346,9 @@ namespace NetMonitor
             SetupTimer();
             PositionWidget();
             BindToTaskbarOwner();
+
+            this.MouseEnter += OnWidgetMouseEnter;
+            this.MouseLeave += OnWidgetMouseLeave;
 
             try
             {
@@ -386,13 +516,78 @@ namespace NetMonitor
             return true;
         }
 
+        public static string GetSystemDefaultLanguage()
+        {
+            try
+            {
+                string twoLetter = CultureInfo.InstalledUICulture.TwoLetterISOLanguageName.ToLowerInvariant();
+                return (twoLetter == "pt") ? "pt" : "en";
+            }
+            catch
+            {
+                return "pt";
+            }
+        }
+
+        public static bool IsAnyScreensaverActive()
+        {
+            // 1. Verificação oficial SPI
+            bool ss = false;
+            if (SystemParametersInfo(SPI_GETSCREENSAVERRUNNING, 0, ref ss, 0) && ss)
+                return true;
+
+            // 2. Janela clássica de screensaver
+            if (FindWindow("WindowsScreenSaverClass", null) != IntPtr.Zero)
+                return true;
+
+            // 3. Processos .scr ativos no Windows (via Toolhelp32: instantâneo, 0.05ms, zero alocação de heap)
+            try
+            {
+                IntPtr hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+                if (hSnap != IntPtr.Zero && hSnap != (IntPtr)(-1))
+                {
+                    try
+                    {
+                        PROCESSENTRY32 pe = new PROCESSENTRY32();
+                        pe.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+                        if (Process32First(hSnap, ref pe))
+                        {
+                            do
+                            {
+                                if (!string.IsNullOrEmpty(pe.szExeFile))
+                                {
+                                    if (pe.szExeFile.EndsWith(".scr", StringComparison.OrdinalIgnoreCase) ||
+                                        pe.szExeFile.IndexOf("screensaver", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                        string.Equals(pe.szExeFile, "Bubbles", StringComparison.OrdinalIgnoreCase) ||
+                                        string.Equals(pe.szExeFile, "Mystify", StringComparison.OrdinalIgnoreCase) ||
+                                        string.Equals(pe.szExeFile, "Ribbons", StringComparison.OrdinalIgnoreCase) ||
+                                        string.Equals(pe.szExeFile, "PhotoScreensaver", StringComparison.OrdinalIgnoreCase) ||
+                                        string.Equals(pe.szExeFile, "ssText3d", StringComparison.OrdinalIgnoreCase) ||
+                                        string.Equals(pe.szExeFile, "scrnsave", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        return true;
+                                    }
+                                }
+                            } while (Process32Next(hSnap, ref pe));
+                        }
+                    }
+                    finally
+                    {
+                        CloseHandle(hSnap);
+                    }
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
         private void SetupFonts()
         {
             if (fontNum != null) fontNum.Dispose();
             if (fontUnit != null) fontUnit.Dispose();
             if (fontUnicode != null) fontUnicode.Dispose();
 
-            // Resolução de fonte com fallback seguro
             string targetFamily = fontFamily;
             if (!IsFontInstalled(targetFamily))
             {
@@ -517,29 +712,34 @@ namespace NetMonitor
             updateTimer.Interval = 1000;
             updateTimer.Tick += (s, e) =>
             {
-                // Checagem de Screensaver
+                // Proteção contra descanso de tela / screensaver
                 if (hideOnScreensaver)
                 {
-                    bool ss = false;
-                    if (SystemParametersInfo(SPI_GETSCREENSAVERRUNNING, 0, ref ss, 0))
+                    bool ss = IsAnyScreensaverActive();
+                    if (ss || isSessionLocked)
                     {
-                        if (ss != isScreensaverRunning)
+                        isScreensaverRunning = true;
+                        if (this.Visible)
                         {
-                            isScreensaverRunning = ss;
-                            if (isScreensaverRunning)
-                            {
-                                if (this.Visible) this.Visible = false;
-                                return;
-                            }
-                            else if (!isSessionLocked && !this.Visible)
-                            {
-                                this.Visible = true;
-                                PositionWidget();
-                                this.Invalidate();
-                            }
+                            this.Visible = false;
+                            SetWindowPos(this.Handle, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
+                        }
+                        if (flyoutForm != null && flyoutForm.Visible)
+                        {
+                            flyoutForm.Hide();
+                        }
+                        return; // Não executa SetWindowPos de exibição nem UpdateTraffic enquanto em descanso!
+                    }
+                    else
+                    {
+                        if (isScreensaverRunning || !this.Visible)
+                        {
+                            isScreensaverRunning = false;
+                            this.Visible = true;
+                            PositionWidget();
+                            this.Invalidate();
                         }
                     }
-                    if (isScreensaverRunning || isSessionLocked) return;
                 }
 
                 UpdateTraffic();
@@ -550,7 +750,10 @@ namespace NetMonitor
                     ApplySystemTheme();
                 }
 
-                SetWindowPos(this.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                if (this.Visible && !isSettingsDialogOpen && !isScreensaverRunning && !isSessionLocked)
+                {
+                    SetWindowPos(this.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                }
             };
             updateTimer.Start();
             UpdateTraffic();
@@ -578,11 +781,24 @@ namespace NetMonitor
                 ApplySystemTheme();
             }
 
+            if (m.Msg == WM_DISPLAYCHANGE)
+            {
+                // Multi-monitor: re-posiciona e recalibra limites se a resolução ou disposição de telas mudar
+                PositionWidget(false);
+                if (flyoutForm != null && flyoutForm.Visible)
+                {
+                    PositionFlyout();
+                }
+            }
+
             if (m.Msg == WM_WINDOWPOSCHANGING)
             {
-                WINDOWPOS pos = (WINDOWPOS)Marshal.PtrToStructure(m.LParam, typeof(WINDOWPOS));
-                pos.hwndInsertAfter = HWND_TOPMOST;
-                Marshal.StructureToPtr(pos, m.LParam, false);
+                if (this.Visible && !isScreensaverRunning && !isSessionLocked)
+                {
+                    WINDOWPOS pos = (WINDOWPOS)Marshal.PtrToStructure(m.LParam, typeof(WINDOWPOS));
+                    pos.hwndInsertAfter = HWND_TOPMOST;
+                    Marshal.StructureToPtr(pos, m.LParam, false);
+                }
             }
             base.WndProc(ref m);
         }
@@ -600,7 +816,7 @@ namespace NetMonitor
 
                         object valLang = key.GetValue("Language");
                         if (valLang != null) currentLanguage = valLang.ToString();
-                        else currentLanguage = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("pt", StringComparison.OrdinalIgnoreCase) ? "pt" : "en";
+                        else currentLanguage = GetSystemDefaultLanguage();
 
                         object valFormat = key.GetValue("SpeedUnitFormat");
                         if (valFormat != null) speedUnitFormat = valFormat.ToString();
@@ -622,6 +838,10 @@ namespace NetMonitor
                         object valFollow = key.GetValue("FollowSystemTheme");
                         if (valFollow != null) followSystemTheme = Convert.ToInt32(valFollow) == 1;
                         else followSystemTheme = true;
+
+                        object valHover = key.GetValue("ShowHoverFlyout");
+                        if (valHover != null) showHoverFlyout = Convert.ToInt32(valHover) == 1;
+                        else showHoverFlyout = true;
 
                         object valTpl = key.GetValue("IconTemplate");
                         if (valTpl != null) iconTemplate = valTpl.ToString();
@@ -666,6 +886,10 @@ namespace NetMonitor
                         arrowColorUp = HexToColor(key.GetValue("ArrowColorUp") as string, Color.FromArgb(235, 235, 235));
                         arrowColorDown = HexToColor(key.GetValue("ArrowColorDown") as string, Color.FromArgb(235, 235, 235));
                     }
+                    else
+                    {
+                        currentLanguage = GetSystemDefaultLanguage();
+                    }
                 }
             }
             catch { }
@@ -687,6 +911,7 @@ namespace NetMonitor
                         key.SetValue("IsLocked", isLocked ? 1 : 0);
                         key.SetValue("HideOnScreensaver", hideOnScreensaver ? 1 : 0);
                         key.SetValue("FollowSystemTheme", followSystemTheme ? 1 : 0);
+                        key.SetValue("ShowHoverFlyout", showHoverFlyout ? 1 : 0);
                         key.SetValue("CustomX", this.Location.X);
                         key.SetValue("CustomY", this.Location.Y);
 
@@ -716,6 +941,73 @@ namespace NetMonitor
                 }
             }
             catch { }
+        }
+
+        // Método de Live Tuning: reflete alterações na barra de tarefas em tempo real
+        public void ApplyLiveTuning(
+            string lang,
+            string speedFormat,
+            string unit,
+            bool arrowRight,
+            bool locked,
+            bool hideScreensaver,
+            bool showHover,
+            string tpl,
+            string upChar,
+            string downChar,
+            string fontFam,
+            float fontSz,
+            FontStyle fontSt,
+            string txtColMode,
+            Color txtColUni,
+            Color txtColUp,
+            Color txtColDn,
+            string unitColMode,
+            Color unitColUni,
+            Color unitColUp,
+            Color unitColDn,
+            string arrColMode,
+            Color arrColUni,
+            Color arrColUp,
+            Color arrColDn)
+        {
+            this.currentLanguage = lang;
+            this.speedUnitFormat = speedFormat;
+            this.unitMode = unit;
+            this.arrowOnRight = arrowRight;
+            this.isLocked = locked;
+            this.hideOnScreensaver = hideScreensaver;
+            this.showHoverFlyout = showHover;
+            this.iconTemplate = tpl;
+            this.customUpChar = upChar;
+            this.customDownChar = downChar;
+
+            this.fontFamily = fontFam;
+            this.fontSize = fontSz;
+            this.fontStyle = fontSt;
+
+            this.textColorMode = txtColMode;
+            this.textColorUnified = txtColUni;
+            this.textColorUp = txtColUp;
+            this.textColorDown = txtColDn;
+
+            this.unitColorMode = unitColMode;
+            this.unitColorUnified = unitColUni;
+            this.unitColorUp = unitColUp;
+            this.unitColorDown = unitColDn;
+
+            this.arrowColorMode = arrColMode;
+            this.arrowColorUnified = arrColUni;
+            this.arrowColorUp = arrColUp;
+            this.arrowColorDown = arrColDn;
+
+            SetupFonts();
+            UpdateCachedGdiResources();
+            if (flyoutForm != null && flyoutForm.Visible)
+            {
+                flyoutForm.ApplyTheme(IsWindowsDarkTheme(), currentLanguage);
+            }
+            this.Invalidate();
         }
 
         private bool IsAutoStartEnabled()
@@ -817,8 +1109,8 @@ namespace NetMonitor
             Screen targetScreen = Screen.FromPoint(new Point(posX, posY));
             if (targetScreen == null) targetScreen = primary;
 
-            posX = Math.Max(targetScreen.WorkingArea.Left, Math.Min(posX, targetScreen.WorkingArea.Right - WIDGET_WIDTH));
-            posY = Math.Max(targetScreen.WorkingArea.Top, Math.Min(posY, targetScreen.Bounds.Bottom - WIDGET_HEIGHT));
+            posX = Math.Max(targetScreen.Bounds.Left, Math.Min(posX, targetScreen.Bounds.Right - WIDGET_WIDTH));
+            posY = Math.Max(targetScreen.Bounds.Top, Math.Min(posY, targetScreen.Bounds.Bottom - WIDGET_HEIGHT));
 
             this.Location = new Point(posX, posY);
             SetWindowPos(this.Handle, HWND_TOPMOST, posX, posY, WIDGET_WIDTH, WIDGET_HEIGHT, SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -882,7 +1174,6 @@ namespace NetMonitor
 
         private void UpdateTraffic()
         {
-            // Otimização: Reutiliza o nic em cache enquanto ativo
             if (cachedNic == null || cachedNic.OperationalStatus != OperationalStatus.Up)
             {
                 cachedNic = GetTargetNic();
@@ -927,7 +1218,7 @@ namespace NetMonitor
                         FormatSpeed(bitsOutPerSec, out newUpNum, out newUpUnit);
                         FormatSpeed(bitsInPerSec, out newDownNum, out newDownUnit);
 
-                        // Otimização zero CPU: Só invalida a tela se o valor realmente mudou
+                        // Otimização zero CPU: Só invalida se o valor mudou
                         if (newUpNum != strUpNum || newUpUnit != strUpUnit ||
                             newDownNum != strDownNum || newDownUnit != strDownUnit)
                         {
@@ -1158,7 +1449,6 @@ namespace NetMonitor
             }
             else if (iconTemplate == "VectorDualChevron")
             {
-                // Chevrons Duplos Velocidade (▲▲ / ▼▼)
                 g.DrawLines(penArrowUp, new PointF[] {
                     new PointF(centerX - 3.5f, 6.8f),
                     new PointF(centerX, 3.8f),
@@ -1183,7 +1473,6 @@ namespace NetMonitor
             }
             else if (iconTemplate == "StreamTech")
             {
-                // Stream Tech Diagonal 45° (↗ / ↘)
                 g.DrawLine(penArrowUp, centerX - 3.5f, 10.5f, centerX + 3.0f, 4.5f);
                 g.DrawLines(penArrowUp, new PointF[] {
                     new PointF(centerX - 1.0f, 4.5f),
@@ -1217,11 +1506,12 @@ namespace NetMonitor
             bool isDark = IsWindowsDarkTheme();
 
             contextMenu = new ContextMenuStrip();
+            contextMenu.Opening += (s, e) => { HideFlyout(); };
             contextMenu.Renderer = new Windows11MenuRenderer(isDark);
             contextMenu.ShowCheckMargin = true;
             contextMenu.ShowImageMargin = false;
 
-            // 0. Configurações / Settings (Item de destaque)
+            // 0. Configurações / Settings
             ToolStripMenuItem mnuSettings = new ToolStripMenuItem(isPt ? "Configurações..." : "Settings...");
             mnuSettings.Font = new Font(mnuSettings.Font, FontStyle.Bold);
             mnuSettings.Click += (s, e) => OpenSettingsDialog();
@@ -1409,7 +1699,36 @@ namespace NetMonitor
 
         private void OpenSettingsDialog()
         {
-            updateTimer.Stop();
+            // Snapshot do estado original para cancelamento seguro
+            string origLang = currentLanguage;
+            string origFormat = speedUnitFormat;
+            string origUnit = unitMode;
+            bool origArrow = arrowOnRight;
+            bool origLocked = isLocked;
+            bool origHideSs = hideOnScreensaver;
+            bool origFollow = followSystemTheme;
+            string origTpl = iconTemplate;
+            string origUp = customUpChar;
+            string origDown = customDownChar;
+            string origFontF = fontFamily;
+            float origFontS = fontSize;
+            FontStyle origFontSt = fontStyle;
+            string origTm = textColorMode;
+            Color origTu = textColorUnified;
+            Color origTup = textColorUp;
+            Color origTdn = textColorDown;
+            string origUm = unitColorMode;
+            Color origUu = unitColorUnified;
+            Color origUup = unitColorUp;
+            Color origUdn = unitColorDown;
+            string origAm = arrowColorMode;
+            Color origAu = arrowColorUnified;
+            Color origAup = arrowColorUp;
+            Color origAdn = arrowColorDown;
+            bool origHover = showHoverFlyout;
+
+            isSettingsDialogOpen = true;
+
             try
             {
                 using (SettingsForm sf = new SettingsForm(
@@ -1420,6 +1739,7 @@ namespace NetMonitor
                     arrowOnRight,
                     isLocked,
                     hideOnScreensaver,
+                    showHoverFlyout,
                     followSystemTheme,
                     iconTemplate,
                     customUpChar,
@@ -1442,47 +1762,24 @@ namespace NetMonitor
                 {
                     if (sf.ShowDialog() == DialogResult.OK)
                     {
-                        currentLanguage = sf.SelectedLanguage;
-                        speedUnitFormat = sf.SelectedSpeedUnitFormat;
-                        unitMode = sf.SelectedUnitMode;
-                        arrowOnRight = sf.SelectedArrowOnRight;
-                        isLocked = sf.SelectedIsLocked;
-                        hideOnScreensaver = sf.SelectedHideOnScreensaver;
-                        followSystemTheme = sf.SelectedFollowSystemTheme;
-                        iconTemplate = sf.SelectedIconTemplate;
-                        customUpChar = sf.SelectedCustomUpChar;
-                        customDownChar = sf.SelectedCustomDownChar;
-
-                        fontFamily = sf.SelectedFontFamily;
-                        fontSize = sf.SelectedFontSize;
-                        fontStyle = sf.SelectedFontStyle;
-
-                        textColorMode = sf.SelectedTextColorMode;
-                        textColorUnified = sf.SelectedTextColorUnified;
-                        textColorUp = sf.SelectedTextColorUp;
-                        textColorDown = sf.SelectedTextColorDown;
-
-                        unitColorMode = sf.SelectedUnitColorMode;
-                        unitColorUnified = sf.SelectedUnitColorUnified;
-                        unitColorUp = sf.SelectedUnitColorUp;
-                        unitColorDown = sf.SelectedUnitColorDown;
-
-                        arrowColorMode = sf.SelectedArrowColorMode;
-                        arrowColorUnified = sf.SelectedArrowColorUnified;
-                        arrowColorUp = sf.SelectedArrowColorUp;
-                        arrowColorDown = sf.SelectedArrowColorDown;
-
                         SaveSettings();
-                        SetupFonts();
-                        UpdateCachedGdiResources();
                         BuildContextMenu();
-                        this.Invalidate();
+                    }
+                    else
+                    {
+                        // Se cancelar, restaura o snapshot original instantaneamente
+                        ApplyLiveTuning(
+                            origLang, origFormat, origUnit, origArrow, origLocked, origHideSs, origHover,
+                            origTpl, origUp, origDown, origFontF, origFontS, origFontSt,
+                            origTm, origTu, origTup, origTdn,
+                            origUm, origUu, origUup, origUdn,
+                            origAm, origAu, origAup, origAdn);
                     }
                 }
             }
             finally
             {
-                updateTimer.Start();
+                isSettingsDialogOpen = false;
                 try { GC.Collect(2, GCCollectionMode.Optimized); } catch { }
             }
         }
@@ -1491,10 +1788,24 @@ namespace NetMonitor
         {
             if (e.Button == MouseButtons.Left)
             {
+                HideFlyout();
                 if (!isLocked)
                 {
                     ReleaseCapture();
                     SendMessage(this.Handle, WM_NCLBUTTONDOWN, HT_CAPTION, 0);
+
+                    // Validação multi-monitor pós-arrasto (nunca vaza para o monitor vizinho)
+                    Screen scr = Screen.FromControl(this);
+                    if (scr != null)
+                    {
+                        Rectangle b = scr.Bounds;
+                        int clX = Math.Max(b.Left, Math.Min(this.Left, b.Right - WIDGET_WIDTH));
+                        int clY = Math.Max(b.Top, Math.Min(this.Top, b.Bottom - WIDGET_HEIGHT));
+                        if (clX != this.Left || clY != this.Top)
+                        {
+                            this.Location = new Point(clX, clY);
+                        }
+                    }
                     SaveSettings();
                 }
             }
@@ -1504,21 +1815,402 @@ namespace NetMonitor
         {
             if (e.Button == MouseButtons.Right)
             {
-                // Proteção contra transbordamento para o 2º monitor
+                HideFlyout();
                 Screen scr = Screen.FromControl(this);
                 Rectangle wa = scr.WorkingArea;
                 Point pt = Cursor.Position;
 
-                if (pt.X + 220 > wa.Right)
-                {
-                    pt.X = wa.Right - 220;
-                }
-                if (pt.Y + 320 > wa.Bottom)
-                {
-                    pt.Y = wa.Bottom - 320;
-                }
+                int mnuW = Math.Max(220, contextMenu.Width);
+                int mnuH = Math.Max(320, contextMenu.Height);
+
+                // Clamping estrito em todos os 4 lados (nunca vaza para outro monitor)
+                pt.X = Math.Max(wa.Left + 4, Math.Min(wa.Right - mnuW - 4, pt.X));
+                pt.Y = Math.Max(wa.Top + 4, Math.Min(wa.Bottom - mnuH - 4, pt.Y));
 
                 contextMenu.Show(pt);
+            }
+        }
+
+        private void OnWidgetMouseEnter(object sender, EventArgs e)
+        {
+            if (!showHoverFlyout || isSettingsDialogOpen || isScreensaverRunning || isSessionLocked) return;
+            ShowFlyout();
+        }
+
+        private void OnWidgetMouseLeave(object sender, EventArgs e)
+        {
+            if (hoverCheckTimer != null && !hoverCheckTimer.Enabled)
+            {
+                hoverCheckTimer.Start();
+            }
+        }
+
+        private void ShowFlyout()
+        {
+            if (!showHoverFlyout || isSettingsDialogOpen || isScreensaverRunning || isSessionLocked) return;
+
+            if (flyoutForm == null || flyoutForm.IsDisposed)
+            {
+                flyoutForm = new NetworkTopProcessesFlyout();
+                flyoutForm.MouseEnter += (s, e) => { /* Mantém aberto enquanto cursor estiver no card */ };
+                flyoutForm.MouseLeave += (s, e) => { if (hoverCheckTimer != null && !hoverCheckTimer.Enabled) hoverCheckTimer.Start(); };
+            }
+
+            PositionFlyout();
+            flyoutForm.ApplyTheme(IsWindowsDarkTheme(), currentLanguage);
+
+            if (!flyoutForm.Visible)
+            {
+                flyoutForm.Show();
+                SetWindowPos(flyoutForm.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            }
+
+            isHoverSampling = true;
+            lastProcessIo.Clear();
+
+            // Amostragem inicial imediata assíncrona
+            ThreadPool.QueueUserWorkItem(DoProcessSampleWork);
+
+            if (processSampleTimer == null)
+            {
+                processSampleTimer = new Timer();
+                processSampleTimer.Interval = 1000;
+                processSampleTimer.Tick += (s, e) =>
+                {
+                    if (isHoverSampling && flyoutForm != null && flyoutForm.Visible)
+                    {
+                        ThreadPool.QueueUserWorkItem(DoProcessSampleWork);
+                    }
+                    else
+                    {
+                        processSampleTimer.Stop();
+                    }
+                };
+            }
+            processSampleTimer.Start();
+
+            if (hoverCheckTimer == null)
+            {
+                hoverCheckTimer = new Timer();
+                hoverCheckTimer.Interval = 200;
+                hoverCheckTimer.Tick += HoverCheckTimer_Tick;
+            }
+            hoverCheckTimer.Start();
+        }
+
+        private void HoverCheckTimer_Tick(object sender, EventArgs e)
+        {
+            Point cursor = Cursor.Position;
+            bool overWidget = this.Visible && this.Bounds.Contains(cursor);
+            bool overFlyout = (flyoutForm != null && flyoutForm.Visible && flyoutForm.Bounds.Contains(cursor));
+
+            if (!overWidget && !overFlyout)
+            {
+                HideFlyout();
+            }
+        }
+
+        private void HideFlyout()
+        {
+            isHoverSampling = false;
+            if (processSampleTimer != null) processSampleTimer.Stop();
+            if (hoverCheckTimer != null) hoverCheckTimer.Stop();
+
+            if (flyoutForm != null && flyoutForm.Visible)
+            {
+                flyoutForm.Hide();
+            }
+
+            lastProcessIo.Clear();
+            cachedProcessNames.Clear();
+        }
+
+        private void PositionFlyout()
+        {
+            if (flyoutForm == null) return;
+            int flyoutW = flyoutForm.Width;
+            int flyoutH = flyoutForm.Height;
+
+            Screen scr = Screen.FromControl(this);
+            if (scr == null) scr = Screen.PrimaryScreen;
+            Rectangle wa = scr.WorkingArea;
+
+            int desiredX = this.Left + (this.Width - flyoutW) / 2;
+            int desiredY = this.Top - flyoutH - 8;
+
+            int clampedX = Math.Max(wa.Left + 6, Math.Min(wa.Right - flyoutW - 6, desiredX));
+            int clampedY = desiredY;
+
+            if (clampedY < wa.Top + 6)
+            {
+                clampedY = this.Bottom + 8;
+            }
+            if (clampedY + flyoutH > wa.Bottom - 6)
+            {
+                clampedY = wa.Bottom - flyoutH - 6;
+            }
+
+            flyoutForm.Location = new Point(clampedX, clampedY);
+        }
+
+        private void DoProcessSampleWork(object state)
+        {
+            if (!isHoverSampling || flyoutForm == null || !flyoutForm.Visible) return;
+
+            try
+            {
+                HashSet<int> activePids = GetActiveNetworkPids();
+                if (activePids.Count == 0) return;
+
+                List<ProcessTrafficItem> rawItems = new List<ProcessTrafficItem>();
+                Dictionary<string, int> nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                Dictionary<int, string> pidNames = new Dictionary<int, string>();
+
+                foreach (int pid in activePids)
+                {
+                    string pName = GetProcessName(pid);
+                    pidNames[pid] = pName;
+                    if (!nameCounts.ContainsKey(pName)) nameCounts[pName] = 0;
+                    nameCounts[pName]++;
+                }
+
+                foreach (int pid in activePids)
+                {
+                    IntPtr hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+                    if (hProc != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            IO_COUNTERS counters;
+                            if (GetProcessIoCounters(hProc, out counters))
+                            {
+                                ulong total = counters.ReadTransferCount + counters.WriteTransferCount;
+                                if (lastProcessIo.ContainsKey(pid))
+                                {
+                                    ulong last = lastProcessIo[pid];
+                                    if (total >= last)
+                                    {
+                                        ulong delta = total - last;
+                                        if (delta > 0)
+                                        {
+                                            string baseName = pidNames[pid];
+                                            string label = (nameCounts[baseName] > 1) ? string.Format("{0} ({1})", baseName, pid) : baseName;
+                                            rawItems.Add(new ProcessTrafficItem
+                                            {
+                                                Pid = pid,
+                                                Name = label,
+                                                DeltaBytes = delta,
+                                                SpeedText = FormatSpeedForProcess(delta)
+                                            });
+                                        }
+                                    }
+                                }
+                                lastProcessIo[pid] = total;
+                            }
+                        }
+                        finally
+                        {
+                            CloseHandle(hProc);
+                        }
+                    }
+                }
+
+                // Limpeza periódica de PIDs inativos de lastProcessIo
+                if (lastProcessIo.Count > 100)
+                {
+                    List<int> toRemove = new List<int>();
+                    foreach (var k in lastProcessIo.Keys)
+                    {
+                        if (!activePids.Contains(k)) toRemove.Add(k);
+                    }
+                    for (int i = 0; i < toRemove.Count; i++) lastProcessIo.Remove(toRemove[i]);
+                }
+
+                // Ordenação dinâmica em tempo real (maior consumo primeiro)
+                rawItems.Sort((a, b) => b.DeltaBytes.CompareTo(a.DeltaBytes));
+
+                List<ProcessTrafficItem> top5 = new List<ProcessTrafficItem>();
+                for (int i = 0; i < rawItems.Count && i < 5; i++)
+                {
+                    top5.Add(rawItems[i]);
+                }
+
+                if (flyoutForm != null && flyoutForm.Visible && flyoutForm.IsHandleCreated)
+                {
+                    flyoutForm.BeginInvoke((MethodInvoker)delegate
+                    {
+                        if (flyoutForm != null && flyoutForm.Visible)
+                        {
+                            flyoutForm.UpdateItems(top5);
+                        }
+                    });
+                }
+            }
+            catch { }
+        }
+
+        private static HashSet<int> GetActiveNetworkPids()
+        {
+            HashSet<int> pids = new HashSet<int>();
+
+            // 1. TCP IPv4
+            int size = 0;
+            GetExtendedTcpTable(IntPtr.Zero, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
+            if (size > 0)
+            {
+                IntPtr buf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    if (GetExtendedTcpTable(buf, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) == 0)
+                    {
+                        int count = Marshal.ReadInt32(buf);
+                        IntPtr rowPtr = (IntPtr)((long)buf + 4);
+                        int rowSize = Marshal.SizeOf(typeof(MIB_TCPROW_OWNER_PID));
+                        for (int i = 0; i < count; i++)
+                        {
+                            MIB_TCPROW_OWNER_PID row = (MIB_TCPROW_OWNER_PID)Marshal.PtrToStructure(rowPtr, typeof(MIB_TCPROW_OWNER_PID));
+                            if (row.owningPid > 4) pids.Add(row.owningPid);
+                            rowPtr = (IntPtr)((long)rowPtr + rowSize);
+                        }
+                    }
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+
+            // 2. TCP IPv6
+            size = 0;
+            GetExtendedTcpTable(IntPtr.Zero, ref size, false, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 0);
+            if (size > 0)
+            {
+                IntPtr buf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    if (GetExtendedTcpTable(buf, ref size, false, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 0) == 0)
+                    {
+                        int count = Marshal.ReadInt32(buf);
+                        IntPtr rowPtr = (IntPtr)((long)buf + 4);
+                        int rowSize = Marshal.SizeOf(typeof(MIB_TCP6ROW_OWNER_PID));
+                        for (int i = 0; i < count; i++)
+                        {
+                            MIB_TCP6ROW_OWNER_PID row = (MIB_TCP6ROW_OWNER_PID)Marshal.PtrToStructure(rowPtr, typeof(MIB_TCP6ROW_OWNER_PID));
+                            if (row.owningPid > 4) pids.Add(row.owningPid);
+                            rowPtr = (IntPtr)((long)rowPtr + rowSize);
+                        }
+                    }
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+
+            // 3. UDP IPv4
+            size = 0;
+            GetExtendedUdpTable(IntPtr.Zero, ref size, false, AF_INET, UDP_TABLE_OWNER_PID, 0);
+            if (size > 0)
+            {
+                IntPtr buf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    if (GetExtendedUdpTable(buf, ref size, false, AF_INET, UDP_TABLE_OWNER_PID, 0) == 0)
+                    {
+                        int count = Marshal.ReadInt32(buf);
+                        IntPtr rowPtr = (IntPtr)((long)buf + 4);
+                        int rowSize = Marshal.SizeOf(typeof(MIB_UDPROW_OWNER_PID));
+                        for (int i = 0; i < count; i++)
+                        {
+                            MIB_UDPROW_OWNER_PID row = (MIB_UDPROW_OWNER_PID)Marshal.PtrToStructure(rowPtr, typeof(MIB_UDPROW_OWNER_PID));
+                            if (row.owningPid > 4) pids.Add(row.owningPid);
+                            rowPtr = (IntPtr)((long)rowPtr + rowSize);
+                        }
+                    }
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+
+            // 4. UDP IPv6
+            size = 0;
+            GetExtendedUdpTable(IntPtr.Zero, ref size, false, AF_INET6, UDP_TABLE_OWNER_PID, 0);
+            if (size > 0)
+            {
+                IntPtr buf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    if (GetExtendedUdpTable(buf, ref size, false, AF_INET6, UDP_TABLE_OWNER_PID, 0) == 0)
+                    {
+                        int count = Marshal.ReadInt32(buf);
+                        IntPtr rowPtr = (IntPtr)((long)buf + 4);
+                        int rowSize = Marshal.SizeOf(typeof(MIB_UDP6ROW_OWNER_PID));
+                        for (int i = 0; i < count; i++)
+                        {
+                            MIB_UDP6ROW_OWNER_PID row = (MIB_UDP6ROW_OWNER_PID)Marshal.PtrToStructure(rowPtr, typeof(MIB_UDP6ROW_OWNER_PID));
+                            if (row.owningPid > 4) pids.Add(row.owningPid);
+                            rowPtr = (IntPtr)((long)rowPtr + rowSize);
+                        }
+                    }
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+
+            return pids;
+        }
+
+        private string GetProcessName(int pid)
+        {
+            if (cachedProcessNames.ContainsKey(pid))
+                return cachedProcessNames[pid];
+
+            IntPtr hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (hProc != IntPtr.Zero)
+            {
+                try
+                {
+                    StringBuilder sb = new StringBuilder(512);
+                    int size = sb.Capacity;
+                    if (QueryFullProcessImageName(hProc, 0, sb, ref size) != 0)
+                    {
+                        string fn = System.IO.Path.GetFileName(sb.ToString());
+                        if (!string.IsNullOrEmpty(fn))
+                        {
+                            cachedProcessNames[pid] = fn;
+                            return fn;
+                        }
+                    }
+                }
+                finally
+                {
+                    CloseHandle(hProc);
+                }
+            }
+
+            try
+            {
+                string n = Process.GetProcessById(pid).ProcessName + ".exe";
+                cachedProcessNames[pid] = n;
+                return n;
+            }
+            catch
+            {
+                string fallback = "PID " + pid;
+                cachedProcessNames[pid] = fallback;
+                return fallback;
+            }
+        }
+
+        private string FormatSpeedForProcess(ulong deltaBytes)
+        {
+            if (speedUnitFormat == "Bytes")
+            {
+                double bytes = deltaBytes;
+                if (bytes >= 1073741824.0) return string.Format("{0:0.0} GB/s", bytes / 1073741824.0);
+                if (bytes >= 1048576.0) return string.Format("{0:0.0} MB/s", bytes / 1048576.0);
+                if (bytes >= 1024.0) return string.Format("{0:0} KB/s", bytes / 1024.0);
+                return string.Format("{0} B/s", bytes);
+            }
+            else // Bits (Padrão)
+            {
+                double bits = deltaBytes * 8.0;
+                if (bits >= 1000000000.0) return string.Format("{0:0.0} Gbps", bits / 1000000000.0);
+                if (bits >= 1000000.0) return string.Format("{0:0.0} Mbps", bits / 1000000.0);
+                if (bits >= 1000.0) return string.Format("{0:0} Kbps", bits / 1000.0);
+                return string.Format("{0:0} bps", bits);
             }
         }
 
@@ -1529,6 +2221,9 @@ namespace NetMonitor
                 SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
                 SystemEvents.SessionSwitch -= OnSessionSwitch;
                 if (updateTimer != null) { updateTimer.Stop(); updateTimer.Dispose(); }
+                if (hoverCheckTimer != null) { hoverCheckTimer.Stop(); hoverCheckTimer.Dispose(); }
+                if (processSampleTimer != null) { processSampleTimer.Stop(); processSampleTimer.Dispose(); }
+                if (flyoutForm != null) { flyoutForm.Dispose(); flyoutForm = null; }
                 if (trayIcon != null)
                 {
                     trayIcon.Visible = false;
@@ -1571,6 +2266,193 @@ namespace NetMonitor
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new NetMonitorApp());
+        }
+    }
+
+    // ==============================================================================
+    // CARD FLUTUANTE MODERNO WINDOWS 11: TOP 5 PROGRAMAS POR TRÁFEGO DE REDE
+    // ==============================================================================
+    public class ProcessTrafficItem
+    {
+        public int Pid;
+        public string Name;
+        public ulong DeltaBytes;
+        public string SpeedText;
+    }
+
+    public class NetworkTopProcessesFlyout : Form
+    {
+        private List<ProcessTrafficItem> items = new List<ProcessTrafficItem>();
+        private bool isDark = true;
+        private string lang = "pt";
+        private int cornerPref = 2; // DWMWCP_ROUND
+        private object syncLock = new object();
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        public NetworkTopProcessesFlyout()
+        {
+            this.FormBorderStyle = FormBorderStyle.None;
+            this.ShowInTaskbar = false;
+            this.StartPosition = FormStartPosition.Manual;
+            this.Size = new Size(252, 172);
+            this.DoubleBuffered = true;
+            this.SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= 0x00000080; // WS_EX_TOOLWINDOW
+                cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE
+                cp.ExStyle |= 0x00000008; // WS_EX_TOPMOST
+                cp.ClassStyle |= 0x00020000; // CS_DROPSHADOW
+                return cp;
+            }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            try
+            {
+                DwmSetWindowAttribute(this.Handle, 33, ref cornerPref, sizeof(int));
+            }
+            catch { }
+        }
+
+        public void ApplyTheme(bool dark, string language)
+        {
+            this.isDark = dark;
+            this.lang = language;
+            this.BackColor = dark ? Color.FromArgb(30, 30, 30) : Color.FromArgb(255, 255, 255);
+            this.Invalidate();
+        }
+
+        public void UpdateItems(List<ProcessTrafficItem> newItems)
+        {
+            lock (syncLock)
+            {
+                items = newItems ?? new List<ProcessTrafficItem>();
+            }
+            this.Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+            int w = this.ClientSize.Width;
+            int h = this.ClientSize.Height;
+
+            Color clrBorder = isDark ? Color.FromArgb(52, 52, 52) : Color.FromArgb(226, 226, 226);
+            Color clrHeader = isDark ? Color.FromArgb(150, 150, 150) : Color.FromArgb(110, 110, 110);
+            Color clrDiv = isDark ? Color.FromArgb(44, 44, 44) : Color.FromArgb(235, 235, 235);
+            Color clrTextMain = isDark ? Color.FromArgb(240, 240, 240) : Color.FromArgb(28, 28, 28);
+            Color clrTextMuted = isDark ? Color.FromArgb(120, 120, 120) : Color.FromArgb(145, 145, 145);
+            Color clrAccentSpeed = isDark ? Color.FromArgb(96, 205, 255) : Color.FromArgb(0, 103, 192);
+            Color clrTrack = isDark ? Color.FromArgb(42, 42, 42) : Color.FromArgb(240, 240, 240);
+            Color clrBar = isDark ? Color.FromArgb(0, 120, 212) : Color.FromArgb(0, 120, 212);
+            Color clrBarTop = isDark ? Color.FromArgb(0, 188, 249) : Color.FromArgb(0, 90, 180);
+
+            // Borda externa de 1px
+            using (Pen pBorder = new Pen(clrBorder, 1.0f))
+            {
+                g.DrawRectangle(pBorder, 0, 0, w - 1, h - 1);
+            }
+
+            // Cabeçalho
+            string headerText = (lang == "pt") ? "Top 5 Tráfego de Rede por App" : "Top 5 Network Usage by App";
+            using (SolidBrush brDot = new SolidBrush(clrAccentSpeed))
+            {
+                g.FillEllipse(brDot, 14, 11, 6, 6);
+            }
+
+            using (Font fHead = new Font("Segoe UI", 7.5f, FontStyle.Bold))
+            using (SolidBrush brHead = new SolidBrush(clrHeader))
+            {
+                g.DrawString(headerText, fHead, brHead, 25, 8);
+            }
+
+            // Linha divisória
+            using (Pen pDiv = new Pen(clrDiv, 1.0f))
+            {
+                g.DrawLine(pDiv, 14, 26, w - 14, 26);
+            }
+
+            List<ProcessTrafficItem> currentItems;
+            lock (syncLock)
+            {
+                currentItems = new List<ProcessTrafficItem>(items);
+            }
+
+            if (currentItems.Count == 0)
+            {
+                string emptyText = (lang == "pt") ? "Aguardando atividade de rede..." : "Waiting for network activity...";
+                using (Font fEmpty = new Font("Segoe UI", 8.0f, FontStyle.Italic))
+                using (SolidBrush brEmpty = new SolidBrush(clrTextMuted))
+                using (StringFormat sfC = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                {
+                    g.DrawString(emptyText, fEmpty, brEmpty, new RectangleF(14, 30, w - 28, h - 36), sfC);
+                }
+                return;
+            }
+
+            ulong maxBytes = 1;
+            for (int i = 0; i < currentItems.Count; i++)
+            {
+                if (currentItems[i].DeltaBytes > maxBytes)
+                    maxBytes = currentItems[i].DeltaBytes;
+            }
+
+            int startY = 32;
+            int rowH = 26;
+            using (Font fRank = new Font("Segoe UI", 7.0f, FontStyle.Bold))
+            using (Font fName = new Font("Segoe UI", 8.0f, FontStyle.Regular))
+            using (Font fSpeed = new Font("Segoe UI", 8.0f, FontStyle.Bold))
+            using (SolidBrush brRank = new SolidBrush(clrTextMuted))
+            using (SolidBrush brName = new SolidBrush(clrTextMain))
+            using (SolidBrush brSpeed = new SolidBrush(clrAccentSpeed))
+            using (SolidBrush brTrack = new SolidBrush(clrTrack))
+            using (SolidBrush brFillTop = new SolidBrush(clrBarTop))
+            using (SolidBrush brFillSub = new SolidBrush(clrBar))
+            using (StringFormat sfRight = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Near })
+            {
+                for (int i = 0; i < currentItems.Count && i < 5; i++)
+                {
+                    ProcessTrafficItem item = currentItems[i];
+                    int y = startY + (i * rowH);
+
+                    // Ranking: 1, 2, 3, 4, 5
+                    g.DrawString((i + 1).ToString(), fRank, brRank, 14, y);
+
+                    // Nome do processo
+                    string displayName = item.Name;
+                    if (displayName.Length > 17) displayName = displayName.Substring(0, 15) + "…";
+                    g.DrawString(displayName, fName, brName, 28, y - 1);
+
+                    // Velocidade à direita
+                    g.DrawString(item.SpeedText, fSpeed, brSpeed, w - 14, y - 1, sfRight);
+
+                    // Mini barra horizontal
+                    int barX = 28;
+                    int barY = y + 17;
+                    int barMaxW = w - 42;
+                    int barH = 2;
+
+                    g.FillRectangle(brTrack, barX, barY, barMaxW, barH);
+
+                    float ratio = (maxBytes > 0) ? (float)item.DeltaBytes / (float)maxBytes : 0f;
+                    int fillW = Math.Max(3, (int)(ratio * barMaxW));
+                    g.FillRectangle(i == 0 ? brFillTop : brFillSub, barX, barY, fillW, barH);
+                }
+            }
         }
     }
 
@@ -1699,13 +2581,13 @@ namespace NetMonitor
     // ==============================================================================
     public class SettingsForm : Form
     {
-        // Propriedades Selecionadas
         public string SelectedLanguage { get; private set; }
         public string SelectedSpeedUnitFormat { get; private set; }
         public string SelectedUnitMode { get; private set; }
         public bool SelectedArrowOnRight { get; private set; }
         public bool SelectedIsLocked { get; private set; }
         public bool SelectedHideOnScreensaver { get; private set; }
+        public bool SelectedShowHoverFlyout { get; private set; }
         public bool SelectedFollowSystemTheme { get; private set; }
         public string SelectedIconTemplate { get; private set; }
         public string SelectedCustomUpChar { get; private set; }
@@ -1731,12 +2613,14 @@ namespace NetMonitor
         public Color SelectedArrowColorDown { get; private set; }
 
         // Elementos da Interface
-        private Form parentWidget;
+        private NetMonitorApp parentApp;
         private bool isDarkTheme;
 
-        // Painéis e Navegação Lateral (Sidebar)
+        // Painéis com posicionamento absoluto independente (sem sobreposição)
         private Panel pnlSidebar;
         private Panel pnlMainContent;
+        private Panel pnlBottom;
+
         private Label lblHeaderTitle;
         private Label lblHeaderSubtitle;
 
@@ -1758,6 +2642,7 @@ namespace NetMonitor
         private RadioButton rbLeft;
         private CheckBox chkLock;
         private CheckBox chkScreensaver;
+        private CheckBox chkHoverFlyout;
 
         // Controles: Tipografia
         private ComboBox cbFontFamily;
@@ -1793,6 +2678,10 @@ namespace NetMonitor
 
         // Live Preview Box
         private Panel pnlLivePreview;
+        private Label lblPrevTitle;
+        private Label lblPrevDesc;
+        private Button btnSave;
+        private Button btnCancel;
 
         // Cores Dinâmicas de UI
         private Color clrFormBg;
@@ -1805,13 +2694,14 @@ namespace NetMonitor
         private Color clrAccent = Color.FromArgb(0, 120, 212);
 
         public SettingsForm(
-            Form parent,
+            NetMonitorApp parent,
             string lang,
             string speedFormat,
             string unit,
             bool arrowRight,
             bool locked,
             bool hideScreensaver,
+            bool showHover,
             bool followSysTheme,
             string tpl,
             string upChar,
@@ -1832,13 +2722,14 @@ namespace NetMonitor
             Color arrColUp,
             Color arrColDn)
         {
-            this.parentWidget = parent;
+            this.parentApp = parent;
             this.SelectedLanguage = lang;
             this.SelectedSpeedUnitFormat = speedFormat;
             this.SelectedUnitMode = unit;
             this.SelectedArrowOnRight = arrowRight;
             this.SelectedIsLocked = locked;
             this.SelectedHideOnScreensaver = hideScreensaver;
+            this.SelectedShowHoverFlyout = showHover;
             this.SelectedFollowSystemTheme = followSysTheme;
             this.SelectedIconTemplate = tpl;
             this.SelectedCustomUpChar = upChar;
@@ -1866,6 +2757,42 @@ namespace NetMonitor
             this.isDarkTheme = NetMonitorApp.IsWindowsDarkTheme();
             SetupThemeColors();
             InitializeUI();
+
+            try
+            {
+                SystemEvents.UserPreferenceChanged += OnThemeChanged;
+            }
+            catch { }
+        }
+
+        private void OnThemeChanged(object sender, UserPreferenceChangedEventArgs e)
+        {
+            try
+            {
+                if (this.IsHandleCreated)
+                {
+                    this.BeginInvoke((MethodInvoker)delegate
+                    {
+                        ApplyDynamicTheme(NetMonitorApp.IsWindowsDarkTheme());
+                    });
+                }
+                else
+                {
+                    ApplyDynamicTheme(NetMonitorApp.IsWindowsDarkTheme());
+                }
+            }
+            catch { }
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            const int WM_SETTINGCHANGE = 0x001A;
+            const int WM_THEMECHANGED = 0x031A;
+            if (m.Msg == WM_SETTINGCHANGE || m.Msg == WM_THEMECHANGED)
+            {
+                ApplyDynamicTheme(NetMonitorApp.IsWindowsDarkTheme());
+            }
+            base.WndProc(ref m);
         }
 
         private void SetupThemeColors()
@@ -1892,12 +2819,84 @@ namespace NetMonitor
             }
         }
 
+        public void ApplyDynamicTheme(bool darkNow)
+        {
+            isDarkTheme = darkNow;
+            SetupThemeColors();
+
+            this.BackColor = clrFormBg;
+            if (pnlSidebar != null) pnlSidebar.BackColor = clrSidebarBg;
+            if (pnlMainContent != null) pnlMainContent.BackColor = clrFormBg;
+            if (pnlBottom != null) pnlBottom.BackColor = clrFormBg;
+
+            if (lblHeaderTitle != null) lblHeaderTitle.ForeColor = clrTextMain;
+            if (lblHeaderSubtitle != null) lblHeaderSubtitle.ForeColor = clrTextSub;
+
+            Panel[] pages = new Panel[] { pnlPageGeral, pnlPageFonte, pnlPageCores, pnlPageIcones };
+            foreach (var p in pages)
+            {
+                if (p != null)
+                {
+                    p.BackColor = clrCardBg;
+                    p.Invalidate();
+                }
+            }
+
+            if (btnCancel != null)
+            {
+                btnCancel.BackColor = clrCardBg;
+                btnCancel.ForeColor = clrTextMain;
+                btnCancel.FlatAppearance.BorderColor = clrBorder;
+            }
+
+            if (pnlLivePreview != null)
+            {
+                pnlLivePreview.BackColor = isDarkTheme ? NetMonitorApp.BG_COLOR_DARK : NetMonitorApp.BG_COLOR_LIGHT;
+                pnlLivePreview.Invalidate();
+            }
+
+            this.Invalidate(true);
+        }
+
+        // Envia as alterações ao vivo para o widget da barra de tarefas
+        private void TriggerLiveTuning()
+        {
+            if (parentApp == null) return;
+            parentApp.ApplyLiveTuning(
+                SelectedLanguage,
+                SelectedSpeedUnitFormat,
+                SelectedUnitMode,
+                SelectedArrowOnRight,
+                SelectedIsLocked,
+                SelectedHideOnScreensaver,
+                SelectedShowHoverFlyout,
+                SelectedIconTemplate,
+                SelectedCustomUpChar,
+                SelectedCustomDownChar,
+                SelectedFontFamily,
+                SelectedFontSize,
+                SelectedFontStyle,
+                SelectedTextColorMode,
+                SelectedTextColorUnified,
+                SelectedTextColorUp,
+                SelectedTextColorDown,
+                SelectedUnitColorMode,
+                SelectedUnitColorUnified,
+                SelectedUnitColorUp,
+                SelectedUnitColorDown,
+                SelectedArrowColorMode,
+                SelectedArrowColorUnified,
+                SelectedArrowColorUp,
+                SelectedArrowColorDown
+            );
+        }
+
         private void InitializeUI()
         {
             bool isPt = SelectedLanguage == "pt";
 
             this.Text = isPt ? "Personalização do NetMonitor v1.0.0" : "NetMonitor v1.0.0 Settings";
-            this.Size = new Size(650, 520);
+            this.ClientSize = new Size(740, 540);
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.MinimizeBox = false;
@@ -1905,8 +2904,8 @@ namespace NetMonitor
             this.BackColor = clrFormBg;
             this.Font = new Font("Segoe UI", 9.0f, FontStyle.Regular);
 
-            // Posiciona centralizado e contido no monitor correto (sem transbordar)
-            Screen scr = (parentWidget != null) ? Screen.FromControl(parentWidget) : Screen.PrimaryScreen;
+            // Posiciona centralizado e contido no monitor ativo (sem transbordar)
+            Screen scr = (parentApp != null) ? Screen.FromControl(parentApp) : Screen.PrimaryScreen;
             Rectangle wa = scr.WorkingArea;
             int posX = Math.Max(wa.Left, Math.Min(wa.Right - this.Width, wa.Left + (wa.Width - this.Width) / 2));
             int posY = Math.Max(wa.Top, Math.Min(wa.Bottom - this.Height, wa.Top + (wa.Height - this.Height) / 2));
@@ -1914,24 +2913,24 @@ namespace NetMonitor
             this.Location = new Point(posX, posY);
 
             // ==============================================================
-            // 1. SIDEBAR LATERAL (ESQUERDA)
+            // 1. SIDEBAR LATERAL ESQUERDA (180px de largura, sem sobreposição)
             // ==============================================================
             pnlSidebar = new Panel
             {
-                Dock = DockStyle.Left,
-                Width = 165,
+                Location = new Point(0, 0),
+                Size = new Size(180, 540),
                 BackColor = clrSidebarBg,
-                Padding = new Padding(10, 12, 10, 10)
+                Padding = new Padding(12, 14, 12, 12)
             };
             this.Controls.Add(pnlSidebar);
 
             Label lblAppLogo = new Label
             {
                 Text = "NetMonitor",
-                Font = new Font("Segoe UI", 11.0f, FontStyle.Bold),
+                Font = new Font("Segoe UI", 11.5f, FontStyle.Bold),
                 ForeColor = clrTextMain,
                 AutoSize = true,
-                Location = new Point(14, 14)
+                Location = new Point(16, 16)
             };
             pnlSidebar.Controls.Add(lblAppLogo);
 
@@ -1941,15 +2940,15 @@ namespace NetMonitor
                 Font = new Font("Segoe UI", 8.0f, FontStyle.Regular),
                 ForeColor = clrAccent,
                 AutoSize = true,
-                Location = new Point(14, 34)
+                Location = new Point(16, 38)
             };
             pnlSidebar.Controls.Add(lblAppVer);
 
-            int btnY = 70;
+            int btnY = 78;
             btnNavGeral = CreateSidebarButton(isPt ? "⚙️  Geral" : "⚙️  General", btnY, () => SwitchPage(0));
-            btnNavFonte = CreateSidebarButton(isPt ? "🔤  Tipografia" : "🔤  Typography", btnY + 40, () => SwitchPage(1));
-            btnNavCores = CreateSidebarButton(isPt ? "🎨  Cores" : "🎨  Colors", btnY + 80, () => SwitchPage(2));
-            btnNavIcones = CreateSidebarButton(isPt ? "🔼  Ícones & Setas" : "🔼  Icons & Arrows", btnY + 120, () => SwitchPage(3));
+            btnNavFonte = CreateSidebarButton(isPt ? "🔤  Tipografia" : "🔤  Typography", btnY + 44, () => SwitchPage(1));
+            btnNavCores = CreateSidebarButton(isPt ? "🎨  Cores" : "🎨  Colors", btnY + 88, () => SwitchPage(2));
+            btnNavIcones = CreateSidebarButton(isPt ? "🔼  Ícones & Setas" : "🔼  Icons & Arrows", btnY + 132, () => SwitchPage(3));
 
             pnlSidebar.Controls.Add(btnNavGeral);
             pnlSidebar.Controls.Add(btnNavFonte);
@@ -1957,24 +2956,23 @@ namespace NetMonitor
             pnlSidebar.Controls.Add(btnNavIcones);
 
             // ==============================================================
-            // 2. PAINEL PRINCIPAL (DIREITA)
+            // 2. PAINEL PRINCIPAL DIREITO (560px de largura, inicia em X=180)
             // ==============================================================
             pnlMainContent = new Panel
             {
-                Dock = DockStyle.Fill,
-                BackColor = clrFormBg,
-                Padding = new Padding(18, 14, 18, 14)
+                Location = new Point(180, 0),
+                Size = new Size(560, 455),
+                BackColor = clrFormBg
             };
             this.Controls.Add(pnlMainContent);
 
-            // Cabeçalho dinâmico do painel
             lblHeaderTitle = new Label
             {
                 Text = isPt ? "Preferências Gerais" : "General Preferences",
-                Font = new Font("Segoe UI", 12.0f, FontStyle.Bold),
+                Font = new Font("Segoe UI", 13.0f, FontStyle.Bold),
                 ForeColor = clrTextMain,
                 AutoSize = true,
-                Location = new Point(18, 14)
+                Location = new Point(24, 16)
             };
             pnlMainContent.Controls.Add(lblHeaderTitle);
 
@@ -1984,103 +2982,104 @@ namespace NetMonitor
                 Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
                 ForeColor = clrTextSub,
                 AutoSize = true,
-                Location = new Point(19, 36)
+                Location = new Point(25, 42)
             };
             pnlMainContent.Controls.Add(lblHeaderSubtitle);
 
-            // Container de páginas
-            int pageY = 62;
-            int pageW = pnlMainContent.Width - 36;
-            int pageH = 315;
+            // Container de cartões
+            int cardW = 512;
+            int cardH = 368;
+            int cardX = 24;
+            int cardY = 72;
 
-            pnlPageGeral = new Panel { Location = new Point(18, pageY), Size = new Size(445, pageH), BackColor = Color.Transparent };
-            pnlPageFonte = new Panel { Location = new Point(18, pageY), Size = new Size(445, pageH), BackColor = Color.Transparent, Visible = false };
-            pnlPageCores = new Panel { Location = new Point(18, pageY), Size = new Size(445, pageH), BackColor = Color.Transparent, Visible = false };
-            pnlPageIcones = new Panel { Location = new Point(18, pageY), Size = new Size(445, pageH), BackColor = Color.Transparent, Visible = false };
+            pnlPageGeral = CreateCard(pnlMainContent, cardX, cardY, cardW, cardH);
+            pnlPageFonte = CreateCard(pnlMainContent, cardX, cardY, cardW, cardH);
+            pnlPageCores = CreateCard(pnlMainContent, cardX, cardY, cardW, cardH);
+            pnlPageIcones = CreateCard(pnlMainContent, cardX, cardY, cardW, cardH);
 
-            pnlMainContent.Controls.Add(pnlPageGeral);
-            pnlMainContent.Controls.Add(pnlPageFonte);
-            pnlMainContent.Controls.Add(pnlPageCores);
-            pnlMainContent.Controls.Add(pnlPageIcones);
+            pnlPageFonte.Visible = false;
+            pnlPageCores.Visible = false;
+            pnlPageIcones.Visible = false;
 
-            // Constrói o conteúdo de cada página
             BuildPageGeral(pnlPageGeral, isPt);
             BuildPageFonte(pnlPageFonte, isPt);
             BuildPageCores(pnlPageCores, isPt);
             BuildPageIcones(pnlPageIcones, isPt);
 
             // ==============================================================
-            // 3. BARRA INFERIOR COM LIVE PREVIEW E AÇÕES
+            // 3. BARRA INFERIOR (Inicia em X=180, Y=455, Height=85)
             // ==============================================================
-            int bottomY = this.ClientSize.Height - 88;
-            Panel pnlBottom = new Panel
+            pnlBottom = new Panel
             {
-                Location = new Point(165, bottomY),
-                Size = new Size(this.ClientSize.Width - 165, 88),
+                Location = new Point(180, 455),
+                Size = new Size(560, 85),
                 BackColor = clrFormBg
             };
             this.Controls.Add(pnlBottom);
-            pnlBottom.BringToFront();
 
-            // Linha divisória
-            Panel pnlDiv = new Panel { Location = new Point(18, 0), Size = new Size(pnlBottom.Width - 36, 1), BackColor = clrBorder };
+            Panel pnlDiv = new Panel
+            {
+                Location = new Point(24, 0),
+                Size = new Size(cardW, 1),
+                BackColor = clrBorder
+            };
             pnlBottom.Controls.Add(pnlDiv);
 
-            // Live Preview Box
             pnlLivePreview = new Panel
             {
-                Location = new Point(18, 12),
-                Size = new Size(110, 42),
-                BackColor = Color.FromArgb(28, 28, 28)
+                Location = new Point(24, 18),
+                Size = new Size(116, 42),
+                BackColor = isDarkTheme ? NetMonitorApp.BG_COLOR_DARK : NetMonitorApp.BG_COLOR_LIGHT
             };
             pnlLivePreview.Paint += PnlLivePreview_Paint;
             pnlBottom.Controls.Add(pnlLivePreview);
 
-            Label lblPrevTitle = new Label
+            lblPrevTitle = new Label
             {
                 Text = isPt ? "PRÉ-VISUALIZAÇÃO AO VIVO" : "LIVE PREVIEW",
                 Font = new Font("Segoe UI", 7.5f, FontStyle.Bold),
                 ForeColor = clrAccent,
-                Location = new Point(136, 14),
+                Location = new Point(152, 18),
                 AutoSize = true
             };
             pnlBottom.Controls.Add(lblPrevTitle);
 
-            Label lblPrevDesc = new Label
+            lblPrevDesc = new Label
             {
-                Text = isPt ? "Atualização instantânea com as fontes, cores e setas." : "Instant update with selected fonts, colors, and arrows.",
+                Text = isPt ? "Atualização instantânea na barra de tarefas e no painel." : "Instant live update on taskbar and settings panel.",
                 Font = new Font("Segoe UI", 7.5f, FontStyle.Regular),
                 ForeColor = clrTextSub,
-                Location = new Point(136, 30),
-                AutoSize = true
+                Location = new Point(152, 36),
+                Size = new Size(185, 32),
+                AutoSize = false
             };
             pnlBottom.Controls.Add(lblPrevDesc);
 
-            // Botão Salvar
-            Button btnSave = new Button
+            btnSave = new Button
             {
                 Text = isPt ? "Salvar" : "Save",
                 Font = new Font("Segoe UI", 9.0f, FontStyle.Bold),
-                Location = new Point(pnlBottom.Width - 180, 14),
-                Size = new Size(75, 34),
+                Location = new Point(345, 20),
+                Size = new Size(90, 36),
                 BackColor = clrAccent,
                 ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
             };
             btnSave.FlatAppearance.BorderSize = 0;
             btnSave.Click += BtnSave_Click;
             pnlBottom.Controls.Add(btnSave);
 
-            // Botão Cancelar
-            Button btnCancel = new Button
+            btnCancel = new Button
             {
                 Text = isPt ? "Cancelar" : "Cancel",
                 Font = new Font("Segoe UI", 9.0f, FontStyle.Regular),
-                Location = new Point(pnlBottom.Width - 95, 14),
-                Size = new Size(75, 34),
+                Location = new Point(445, 20),
+                Size = new Size(90, 36),
                 BackColor = clrCardBg,
                 ForeColor = clrTextMain,
-                FlatStyle = FlatStyle.Flat
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
             };
             btnCancel.FlatAppearance.BorderColor = clrBorder;
             btnCancel.Click += (s, e) => { this.DialogResult = DialogResult.Cancel; this.Close(); };
@@ -2094,15 +3093,16 @@ namespace NetMonitor
             Button btn = new Button
             {
                 Text = text,
-                Location = new Point(6, top),
-                Size = new Size(153, 34),
+                Location = new Point(8, top),
+                Size = new Size(164, 38),
                 FlatStyle = FlatStyle.Flat,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(10, 0, 0, 0),
+                Padding = new Padding(12, 0, 0, 0),
                 Font = new Font("Segoe UI", 9.0f, FontStyle.Regular),
                 ForeColor = clrTextMain,
                 BackColor = Color.Transparent,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                UseMnemonic = false
             };
             btn.FlatAppearance.BorderSize = 0;
             btn.Click += (s, e) => onClick();
@@ -2159,23 +3159,23 @@ namespace NetMonitor
         // ==============================================================================
         // PÁGINA 1: GERAL
         // ==============================================================================
-        private void BuildPageGeral(Panel pnl, bool isPt)
+        private void BuildPageGeral(Panel card, bool isPt)
         {
-            Panel card = CreateCard(pnl, 0, 310);
-
             // 1. Idioma
-            Label lblLang = CreateLabel(card, isPt ? "Idioma da Interface:" : "Interface Language:", 16, 16);
-            cbLang = CreateComboBox(card, 160, 14, 255);
+            CreateLabel(card, isPt ? "Idioma da Interface:" : "Interface Language:", 20, 20);
+            cbLang = CreateComboBox(card, 180, 18, 310);
             cbLang.Items.AddRange(new object[] { "Português (Brasil)", "English (United States)" });
             cbLang.SelectedIndex = SelectedLanguage == "pt" ? 0 : 1;
             cbLang.SelectedIndexChanged += (s, e) =>
             {
                 SelectedLanguage = (cbLang.SelectedIndex == 0) ? "pt" : "en";
+                UpdateLanguageTexts();
+                TriggerLiveTuning();
             };
 
-            // 2. Formato de Medição (Bits vs Bytes) - Padrão: Bits
-            Label lblFmt = CreateLabel(card, isPt ? "Formato de Medição:" : "Measurement Format:", 16, 52);
-            cbFormat = CreateComboBox(card, 160, 50, 255);
+            // 2. Formato de Medição (Bits vs Bytes)
+            CreateLabel(card, isPt ? "Formato de Medição:" : "Measurement Format:", 20, 58);
+            cbFormat = CreateComboBox(card, 180, 56, 310);
             cbFormat.Items.AddRange(new object[] {
                 isPt ? "Bits (Mbps, Kbps, Gbps) [Padrão]" : "Bits (Mbps, Kbps, Gbps) [Default]",
                 isPt ? "Bytes (MB/s, KB/s, GB/s)" : "Bytes (MB/s, KB/s, GB/s)"
@@ -2186,30 +3186,32 @@ namespace NetMonitor
                 SelectedSpeedUnitFormat = (cbFormat.SelectedIndex == 1) ? "Bytes" : "Bits";
                 UpdateUnitComboItems(isPt);
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             };
 
             // 3. Escala da Unidade
-            Label lblUnit = CreateLabel(card, isPt ? "Escala da Unidade:" : "Unit Scale:", 16, 88);
-            cbUnits = CreateComboBox(card, 160, 86, 255);
+            CreateLabel(card, isPt ? "Escala da Unidade:" : "Unit Scale:", 20, 96);
+            cbUnits = CreateComboBox(card, 180, 94, 310);
             UpdateUnitComboItems(isPt);
             cbUnits.SelectedIndexChanged += (s, e) =>
             {
                 if (cbUnits.SelectedIndex == 0) SelectedUnitMode = "Auto";
                 else SelectedUnitMode = cbUnits.SelectedItem.ToString();
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             };
 
-            // Linha divisória
-            Panel div = new Panel { Location = new Point(16, 126), Size = new Size(card.Width - 32, 1), BackColor = clrBorder };
+            // Divisor 1
+            Panel div = new Panel { Location = new Point(20, 136), Size = new Size(card.Width - 40, 1), BackColor = clrBorder };
             card.Controls.Add(div);
 
             // 4. Posição das Setas
-            Label lblArrPos = CreateLabel(card, isPt ? "Posição das Setas:" : "Arrow Position:", 16, 138);
+            CreateLabel(card, isPt ? "Posição das Setas:" : "Arrow Position:", 20, 150);
 
             rbRight = new RadioButton
             {
                 Text = isPt ? "À Direita (823 Kbps ▲) [Padrão]" : "On Right (823 Kbps ▲) [Default]",
-                Location = new Point(160, 136),
+                Location = new Point(180, 148),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedArrowOnRight
@@ -2217,39 +3219,46 @@ namespace NetMonitor
             rbLeft = new RadioButton
             {
                 Text = isPt ? "À Esquerda (▲ 823 Kbps)" : "On Left (▲ 823 Kbps)",
-                Location = new Point(160, 160),
+                Location = new Point(180, 174),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = !SelectedArrowOnRight
             };
-            rbRight.CheckedChanged += (s, e) => { SelectedArrowOnRight = rbRight.Checked; pnlLivePreview.Invalidate(); };
+            rbRight.CheckedChanged += (s, e) =>
+            {
+                SelectedArrowOnRight = rbRight.Checked;
+                pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
+            };
             card.Controls.Add(rbRight);
             card.Controls.Add(rbLeft);
 
-            // Linha divisória
-            Panel div2 = new Panel { Location = new Point(16, 194), Size = new Size(card.Width - 32, 1), BackColor = clrBorder };
+            // Divisor 2
+            Panel div2 = new Panel { Location = new Point(20, 210), Size = new Size(card.Width - 40, 1), BackColor = clrBorder };
             card.Controls.Add(div2);
 
             // 5. Opções de Sistema
             chkLock = new CheckBox
             {
                 Text = isPt ? "Travar posição na barra de tarefas" : "Lock position on taskbar",
-                Location = new Point(16, 206),
+                Location = new Point(20, 224),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedIsLocked
             };
+            chkLock.CheckedChanged += (s, e) => { SelectedIsLocked = chkLock.Checked; TriggerLiveTuning(); };
             card.Controls.Add(chkLock);
 
             chkScreensaver = new CheckBox
             {
                 Text = isPt ? "Ocultar automaticamente no Screensaver e Tela de Bloqueio" : "Auto-hide on Screensaver and Lock Screen",
-                Location = new Point(16, 234),
+                Location = new Point(20, 254),
                 AutoSize = true,
                 ForeColor = clrAccent,
                 Font = new Font("Segoe UI", 9.0f, FontStyle.Bold),
                 Checked = SelectedHideOnScreensaver
             };
+            chkScreensaver.CheckedChanged += (s, e) => { SelectedHideOnScreensaver = chkScreensaver.Checked; TriggerLiveTuning(); };
             card.Controls.Add(chkScreensaver);
 
             Label lblHintSs = new Label
@@ -2257,10 +3266,32 @@ namespace NetMonitor
                 Text = isPt ? "Evita que o monitor de rede fique visível por cima do protetor de tela." : "Prevents the network monitor from drawing over the screensaver.",
                 Font = new Font("Segoe UI", 7.5f, FontStyle.Regular),
                 ForeColor = clrTextSub,
-                Location = new Point(34, 256),
+                Location = new Point(42, 278),
                 AutoSize = true
             };
             card.Controls.Add(lblHintSs);
+
+            chkHoverFlyout = new CheckBox
+            {
+                Text = isPt ? "Exibir Top 5 programas ao passar o mouse (Hover)" : "Show Top 5 apps on mouse hover (Flyout)",
+                Location = new Point(20, 304),
+                AutoSize = true,
+                ForeColor = clrAccent,
+                Font = new Font("Segoe UI", 9.0f, FontStyle.Bold),
+                Checked = SelectedShowHoverFlyout
+            };
+            chkHoverFlyout.CheckedChanged += (s, e) => { SelectedShowHoverFlyout = chkHoverFlyout.Checked; TriggerLiveTuning(); };
+            card.Controls.Add(chkHoverFlyout);
+
+            Label lblHintHover = new Label
+            {
+                Text = isPt ? "Card moderno e dinâmico com os 5 processos que mais consomem banda ao vivo." : "Dynamic modern card showing top 5 bandwidth consuming apps live.",
+                Font = new Font("Segoe UI", 7.5f, FontStyle.Regular),
+                ForeColor = clrTextSub,
+                Location = new Point(42, 328),
+                AutoSize = true
+            };
+            card.Controls.Add(lblHintHover);
         }
 
         private void UpdateUnitComboItems(bool isPt)
@@ -2293,16 +3324,29 @@ namespace NetMonitor
             cbUnits.SelectedIndex = idx;
         }
 
+        private void UpdateLanguageTexts()
+        {
+            bool isPt = (SelectedLanguage == "pt");
+            this.Text = isPt ? "Personalização do NetMonitor v1.0.0" : "NetMonitor v1.0.0 Settings";
+            btnNavGeral.Text = isPt ? "⚙️  Geral" : "⚙️  General";
+            btnNavFonte.Text = isPt ? "🔤  Tipografia" : "🔤  Typography";
+            btnNavCores.Text = isPt ? "🎨  Cores" : "🎨  Colors";
+            btnNavIcones.Text = isPt ? "🔼  Ícones & Setas" : "🔼  Icons & Arrows";
+            btnSave.Text = isPt ? "Salvar" : "Save";
+            btnCancel.Text = isPt ? "Cancelar" : "Cancel";
+            lblPrevTitle.Text = isPt ? "PRÉ-VISUALIZAÇÃO AO VIVO" : "LIVE PREVIEW";
+            lblPrevDesc.Text = isPt ? "Atualização instantânea na barra de tarefas e no painel." : "Instant live update on taskbar and settings panel.";
+            SwitchPage(pnlPageGeral.Visible ? 0 : pnlPageFonte.Visible ? 1 : pnlPageCores.Visible ? 2 : 3);
+        }
+
         // ==============================================================================
         // PÁGINA 2: TIPOGRAFIA
         // ==============================================================================
-        private void BuildPageFonte(Panel pnl, bool isPt)
+        private void BuildPageFonte(Panel card, bool isPt)
         {
-            Panel card = CreateCard(pnl, 0, 290);
-
             // 1. Família da Fonte
-            Label lblFam = CreateLabel(card, isPt ? "Família da Fonte:" : "Font Family:", 16, 20);
-            cbFontFamily = CreateComboBox(card, 160, 18, 255);
+            CreateLabel(card, isPt ? "Família da Fonte:" : "Font Family:", 20, 24);
+            cbFontFamily = CreateComboBox(card, 180, 22, 310);
 
             string[] commonFonts = new string[] {
                 "Segoe UI Variable Display",
@@ -2334,11 +3378,12 @@ namespace NetMonitor
             {
                 SelectedFontFamily = cbFontFamily.SelectedItem.ToString();
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             };
 
             // 2. Tamanho da Fonte
-            Label lblSz = CreateLabel(card, isPt ? "Tamanho da Fonte:" : "Font Size:", 16, 62);
-            cbFontSize = CreateComboBox(card, 160, 60, 255);
+            CreateLabel(card, isPt ? "Tamanho da Fonte:" : "Font Size:", 20, 72);
+            cbFontSize = CreateComboBox(card, 180, 70, 310);
             cbFontSize.Items.AddRange(new object[] {
                 "8.0 pt", "8.5 pt", "9.0 pt",
                 isPt ? "9.5 pt [Padrão de Fábrica]" : "9.5 pt [Default]",
@@ -2361,11 +3406,12 @@ namespace NetMonitor
                 float[] sizes = new float[] { 8.0f, 8.5f, 9.0f, 9.5f, 10.0f, 10.5f, 11.0f, 12.0f };
                 SelectedFontSize = (idx >= 0 && idx < sizes.Length) ? sizes[idx] : 9.5f;
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             };
 
             // 3. Estilo da Fonte
-            Label lblSt = CreateLabel(card, isPt ? "Estilo da Fonte:" : "Font Style:", 16, 104);
-            cbFontStyle = CreateComboBox(card, 160, 102, 255);
+            CreateLabel(card, isPt ? "Estilo da Fonte:" : "Font Style:", 20, 120);
+            cbFontStyle = CreateComboBox(card, 180, 118, 310);
             cbFontStyle.Items.AddRange(new object[] {
                 isPt ? "Normal (Regular)" : "Regular",
                 isPt ? "Negrito (Bold) [Padrão de Fábrica]" : "Bold [Default]",
@@ -2382,13 +3428,13 @@ namespace NetMonitor
                 else if (cbFontStyle.SelectedIndex == 2) SelectedFontStyle = FontStyle.Italic;
                 else SelectedFontStyle = FontStyle.Regular;
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             };
 
-            // Linha divisória
-            Panel div = new Panel { Location = new Point(16, 150), Size = new Size(card.Width - 32, 1), BackColor = clrBorder };
+            // Divisor
+            Panel div = new Panel { Location = new Point(20, 170), Size = new Size(card.Width - 40, 1), BackColor = clrBorder };
             card.Controls.Add(div);
 
-            // Dica de tipografia
             Label lblTip = new Label
             {
                 Text = isPt ?
@@ -2396,28 +3442,26 @@ namespace NetMonitor
                     "Sharpness Tip: 'Segoe UI Variable Display' at 9.5 pt Bold offers ideal contrast and readability on Windows 11 taskbar.",
                 Font = new Font("Segoe UI", 8.0f, FontStyle.Regular),
                 ForeColor = clrTextSub,
-                Location = new Point(16, 166),
-                Size = new Size(card.Width - 32, 80)
+                Location = new Point(20, 188),
+                Size = new Size(card.Width - 40, 90)
             };
             card.Controls.Add(lblTip);
         }
 
         // ==============================================================================
-        // PÁGINA 3: CORES (NÚMEROS, UNIDADES E SETAS INDEPENDENTES)
+        // PÁGINA 3: CORES
         // ==============================================================================
-        private void BuildPageCores(Panel pnl, bool isPt)
+        private void BuildPageCores(Panel card, bool isPt)
         {
-            Panel card = CreateCard(pnl, 0, 310);
-
             // -------------------------------------------------------------
-            // Seção 1: Números de Velocidade
+            // Seção 1: Números da Velocidade
             // -------------------------------------------------------------
             Label lblSecNum = new Label
             {
                 Text = isPt ? "1. Números da Velocidade:" : "1. Speed Numbers:",
                 Font = new Font("Segoe UI", 9.0f, FontStyle.Bold),
                 ForeColor = clrAccent,
-                Location = new Point(14, 12),
+                Location = new Point(18, 14),
                 AutoSize = true
             };
             card.Controls.Add(lblSecNum);
@@ -2425,7 +3469,7 @@ namespace NetMonitor
             rbTextUnified = new RadioButton
             {
                 Text = isPt ? "Unificado" : "Unified",
-                Location = new Point(180, 10),
+                Location = new Point(210, 12),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedTextColorMode == "Unified"
@@ -2433,7 +3477,7 @@ namespace NetMonitor
             rbTextIndividual = new RadioButton
             {
                 Text = isPt ? "Individual" : "Individual",
-                Location = new Point(260, 10),
+                Location = new Point(310, 12),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedTextColorMode == "Individual"
@@ -2441,43 +3485,54 @@ namespace NetMonitor
             card.Controls.Add(rbTextUnified);
             card.Controls.Add(rbTextIndividual);
 
-            btnColorTextBoth = CreateColorButton(card, isPt ? "Ambos" : "Both", 14, 34, SelectedTextColorUnified, (col) => {
+            btnColorTextBoth = CreateColorButton(card, isPt ? "Ambos" : "Both", 18, 38, SelectedTextColorUnified, (col) => {
                 SelectedTextColorUnified = col;
                 btnColorTextBoth.BackColor = col;
                 btnColorTextBoth.ForeColor = GetContrastTextColor(col);
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             });
 
-            btnColorTextUp = CreateColorButton(card, "Upload ▲", 152, 34, SelectedTextColorUp, (col) => {
+            btnColorTextUp = CreateColorButton(card, "Upload ▲", 180, 38, SelectedTextColorUp, (col) => {
                 SelectedTextColorUp = col;
                 btnColorTextUp.BackColor = col;
                 btnColorTextUp.ForeColor = GetContrastTextColor(col);
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             });
 
-            btnColorTextDown = CreateColorButton(card, "Download ▼", 290, 34, SelectedTextColorDown, (col) => {
+            btnColorTextDown = CreateColorButton(card, "Download ▼", 342, 38, SelectedTextColorDown, (col) => {
                 SelectedTextColorDown = col;
                 btnColorTextDown.BackColor = col;
                 btnColorTextDown.ForeColor = GetContrastTextColor(col);
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             });
 
-            rbTextUnified.CheckedChanged += (s, e) => UpdateColorControlsState();
-            rbTextIndividual.CheckedChanged += (s, e) => UpdateColorControlsState();
+            rbTextUnified.CheckedChanged += (s, e) => {
+                SelectedTextColorMode = rbTextIndividual.Checked ? "Individual" : "Unified";
+                UpdateColorControlsState();
+                TriggerLiveTuning();
+            };
+            rbTextIndividual.CheckedChanged += (s, e) => {
+                SelectedTextColorMode = rbTextIndividual.Checked ? "Individual" : "Unified";
+                UpdateColorControlsState();
+                TriggerLiveTuning();
+            };
 
-            // Divisor
-            Panel div1 = new Panel { Location = new Point(14, 76), Size = new Size(card.Width - 28, 1), BackColor = clrBorder };
+            // Divisor 1
+            Panel div1 = new Panel { Location = new Point(18, 88), Size = new Size(card.Width - 36, 1), BackColor = clrBorder };
             card.Controls.Add(div1);
 
             // -------------------------------------------------------------
-            // Seção 2: Unidade de Medida (Kbps / Mbps / MB/s)
+            // Seção 2: Unidade de Medição (Kbps / MB/s)
             // -------------------------------------------------------------
             Label lblSecUnit = new Label
             {
                 Text = isPt ? "2. Unidade (Kbps/MB/s):" : "2. Unit (Kbps/MB/s):",
                 Font = new Font("Segoe UI", 9.0f, FontStyle.Bold),
                 ForeColor = clrAccent,
-                Location = new Point(14, 86),
+                Location = new Point(18, 100),
                 AutoSize = true
             };
             card.Controls.Add(lblSecUnit);
@@ -2485,7 +3540,7 @@ namespace NetMonitor
             rbUnitInherit = new RadioButton
             {
                 Text = isPt ? "Igual Números" : "Match Numbers",
-                Location = new Point(160, 84),
+                Location = new Point(190, 98),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedUnitColorMode == "Inherit"
@@ -2493,7 +3548,7 @@ namespace NetMonitor
             rbUnitUnified = new RadioButton
             {
                 Text = isPt ? "Unificado" : "Unified",
-                Location = new Point(270, 84),
+                Location = new Point(310, 98),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedUnitColorMode == "Unified"
@@ -2501,7 +3556,7 @@ namespace NetMonitor
             rbUnitIndividual = new RadioButton
             {
                 Text = isPt ? "Individual" : "Individual",
-                Location = new Point(345, 84),
+                Location = new Point(400, 98),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedUnitColorMode == "Individual"
@@ -2510,33 +3565,54 @@ namespace NetMonitor
             card.Controls.Add(rbUnitUnified);
             card.Controls.Add(rbUnitIndividual);
 
-            btnColorUnitBoth = CreateColorButton(card, isPt ? "Unidade" : "Unit", 14, 108, SelectedUnitColorUnified, (col) => {
+            btnColorUnitBoth = CreateColorButton(card, isPt ? "Unidade" : "Unit", 18, 124, SelectedUnitColorUnified, (col) => {
                 SelectedUnitColorUnified = col;
                 btnColorUnitBoth.BackColor = col;
                 btnColorUnitBoth.ForeColor = GetContrastTextColor(col);
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             });
 
-            btnColorUnitUp = CreateColorButton(card, isPt ? "Unidade Up" : "Unit Up", 152, 108, SelectedUnitColorUp, (col) => {
+            btnColorUnitUp = CreateColorButton(card, isPt ? "Unidade Up" : "Unit Up", 180, 124, SelectedUnitColorUp, (col) => {
                 SelectedUnitColorUp = col;
                 btnColorUnitUp.BackColor = col;
                 btnColorUnitUp.ForeColor = GetContrastTextColor(col);
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             });
 
-            btnColorUnitDown = CreateColorButton(card, isPt ? "Unidade Down" : "Unit Down", 290, 108, SelectedUnitColorDown, (col) => {
+            btnColorUnitDown = CreateColorButton(card, isPt ? "Unidade Down" : "Unit Down", 342, 124, SelectedUnitColorDown, (col) => {
                 SelectedUnitColorDown = col;
                 btnColorUnitDown.BackColor = col;
                 btnColorUnitDown.ForeColor = GetContrastTextColor(col);
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             });
 
-            rbUnitInherit.CheckedChanged += (s, e) => UpdateColorControlsState();
-            rbUnitUnified.CheckedChanged += (s, e) => UpdateColorControlsState();
-            rbUnitIndividual.CheckedChanged += (s, e) => UpdateColorControlsState();
+            rbUnitInherit.CheckedChanged += (s, e) => {
+                if (rbUnitIndividual.Checked) SelectedUnitColorMode = "Individual";
+                else if (rbUnitUnified.Checked) SelectedUnitColorMode = "Unified";
+                else SelectedUnitColorMode = "Inherit";
+                UpdateColorControlsState();
+                TriggerLiveTuning();
+            };
+            rbUnitUnified.CheckedChanged += (s, e) => {
+                if (rbUnitIndividual.Checked) SelectedUnitColorMode = "Individual";
+                else if (rbUnitUnified.Checked) SelectedUnitColorMode = "Unified";
+                else SelectedUnitColorMode = "Inherit";
+                UpdateColorControlsState();
+                TriggerLiveTuning();
+            };
+            rbUnitIndividual.CheckedChanged += (s, e) => {
+                if (rbUnitIndividual.Checked) SelectedUnitColorMode = "Individual";
+                else if (rbUnitUnified.Checked) SelectedUnitColorMode = "Unified";
+                else SelectedUnitColorMode = "Inherit";
+                UpdateColorControlsState();
+                TriggerLiveTuning();
+            };
 
-            // Divisor
-            Panel div2 = new Panel { Location = new Point(14, 150), Size = new Size(card.Width - 28, 1), BackColor = clrBorder };
+            // Divisor 2
+            Panel div2 = new Panel { Location = new Point(18, 174), Size = new Size(card.Width - 36, 1), BackColor = clrBorder };
             card.Controls.Add(div2);
 
             // -------------------------------------------------------------
@@ -2547,7 +3623,7 @@ namespace NetMonitor
                 Text = isPt ? "3. Setas de Tráfego:" : "3. Traffic Arrows:",
                 Font = new Font("Segoe UI", 9.0f, FontStyle.Bold),
                 ForeColor = clrAccent,
-                Location = new Point(14, 160),
+                Location = new Point(18, 186),
                 AutoSize = true
             };
             card.Controls.Add(lblSecArr);
@@ -2555,7 +3631,7 @@ namespace NetMonitor
             rbArrowUnified = new RadioButton
             {
                 Text = isPt ? "Unificado" : "Unified",
-                Location = new Point(180, 158),
+                Location = new Point(210, 184),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedArrowColorMode == "Unified"
@@ -2563,7 +3639,7 @@ namespace NetMonitor
             rbArrowIndividual = new RadioButton
             {
                 Text = isPt ? "Individual" : "Individual",
-                Location = new Point(260, 158),
+                Location = new Point(310, 184),
                 AutoSize = true,
                 ForeColor = clrTextMain,
                 Checked = SelectedArrowColorMode == "Individual"
@@ -2571,31 +3647,41 @@ namespace NetMonitor
             card.Controls.Add(rbArrowUnified);
             card.Controls.Add(rbArrowIndividual);
 
-            btnColorArrowBoth = CreateColorButton(card, isPt ? "Ambas" : "Both", 14, 182, SelectedArrowColorUnified, (col) => {
+            btnColorArrowBoth = CreateColorButton(card, isPt ? "Ambas" : "Both", 18, 210, SelectedArrowColorUnified, (col) => {
                 SelectedArrowColorUnified = col;
                 btnColorArrowBoth.BackColor = col;
                 btnColorArrowBoth.ForeColor = GetContrastTextColor(col);
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             });
 
-            btnColorArrowUp = CreateColorButton(card, "Seta Up ▲", 152, 182, SelectedArrowColorUp, (col) => {
+            btnColorArrowUp = CreateColorButton(card, "Seta Up ▲", 180, 210, SelectedArrowColorUp, (col) => {
                 SelectedArrowColorUp = col;
                 btnColorArrowUp.BackColor = col;
                 btnColorArrowUp.ForeColor = GetContrastTextColor(col);
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             });
 
-            btnColorArrowDown = CreateColorButton(card, "Seta Down ▼", 290, 182, SelectedArrowColorDown, (col) => {
+            btnColorArrowDown = CreateColorButton(card, "Seta Down ▼", 342, 210, SelectedArrowColorDown, (col) => {
                 SelectedArrowColorDown = col;
                 btnColorArrowDown.BackColor = col;
                 btnColorArrowDown.ForeColor = GetContrastTextColor(col);
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             });
 
-            rbArrowUnified.CheckedChanged += (s, e) => UpdateColorControlsState();
-            rbArrowIndividual.CheckedChanged += (s, e) => UpdateColorControlsState();
+            rbArrowUnified.CheckedChanged += (s, e) => {
+                SelectedArrowColorMode = rbArrowIndividual.Checked ? "Individual" : "Unified";
+                UpdateColorControlsState();
+                TriggerLiveTuning();
+            };
+            rbArrowIndividual.CheckedChanged += (s, e) => {
+                SelectedArrowColorMode = rbArrowIndividual.Checked ? "Individual" : "Unified";
+                UpdateColorControlsState();
+                TriggerLiveTuning();
+            };
 
-            // Dica de paleta
             Label lblColorTip = new Label
             {
                 Text = isPt ?
@@ -2603,7 +3689,7 @@ namespace NetMonitor
                     "Click on any color button to open the visual palette dialog.",
                 Font = new Font("Segoe UI", 7.5f, FontStyle.Regular),
                 ForeColor = clrTextSub,
-                Location = new Point(14, 230),
+                Location = new Point(18, 260),
                 AutoSize = true
             };
             card.Controls.Add(lblColorTip);
@@ -2645,7 +3731,7 @@ namespace NetMonitor
             {
                 Text = string.Format("{0}\n{1}", title, NetMonitorApp.ColorToHex(initialColor)),
                 Location = new Point(left, top),
-                Size = new Size(130, 36),
+                Size = new Size(150, 36),
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI", 8.0f, FontStyle.Bold),
                 BackColor = initialColor,
@@ -2679,12 +3765,10 @@ namespace NetMonitor
         // ==============================================================================
         // PÁGINA 4: ÍCONES E MODELOS DE SETAS
         // ==============================================================================
-        private void BuildPageIcones(Panel pnl, bool isPt)
+        private void BuildPageIcones(Panel card, bool isPt)
         {
-            Panel card = CreateCard(pnl, 0, 290);
-
-            Label lblTpl = CreateLabel(card, isPt ? "Modelo Visual das Setas:" : "Arrow Visual Model:", 16, 20);
-            cbTemplate = CreateComboBox(card, 16, 44, 400);
+            CreateLabel(card, isPt ? "Modelo Visual das Setas:" : "Arrow Visual Model:", 20, 20);
+            cbTemplate = CreateComboBox(card, 20, 46, 472);
             cbTemplate.Items.AddRange(new object[] {
                 isPt ? "Triângulos Modernos (▲ / ▼) [Vetor Limpo Padrão]" : "Modern Triangles (▲ / ▼) [Clean Vector Default]",
                 isPt ? "Chevrons Fluent (⌃ / ⌄) [Vetor Linha]" : "Fluent Chevrons (⌃ / ⌄) [Vector Outline]",
@@ -2701,16 +3785,16 @@ namespace NetMonitor
             else if (SelectedIconTemplate == "UnicodeClassic") cbTemplate.SelectedIndex = 4;
             else cbTemplate.SelectedIndex = 5;
 
-            // Linha divisória
-            Panel div = new Panel { Location = new Point(16, 92), Size = new Size(card.Width - 32, 1), BackColor = clrBorder };
+            // Divisor
+            Panel div = new Panel { Location = new Point(20, 96), Size = new Size(card.Width - 40, 1), BackColor = clrBorder };
             card.Controls.Add(div);
 
             // Caracteres Personalizados
-            lblUp = CreateLabel(card, isPt ? "Caractere Upload:" : "Upload Character:", 16, 114);
+            lblUp = CreateLabel(card, isPt ? "Caractere Upload:" : "Upload Character:", 20, 118);
             txtUp = new TextBox
             {
-                Location = new Point(160, 112),
-                Size = new Size(120, 24),
+                Location = new Point(180, 116),
+                Size = new Size(140, 24),
                 BackColor = clrInputBg,
                 ForeColor = clrTextMain,
                 Text = SelectedCustomUpChar
@@ -2718,11 +3802,11 @@ namespace NetMonitor
             card.Controls.Add(lblUp);
             card.Controls.Add(txtUp);
 
-            lblDown = CreateLabel(card, isPt ? "Caractere Download:" : "Download Character:", 16, 150);
+            lblDown = CreateLabel(card, isPt ? "Caractere Download:" : "Download Character:", 20, 158);
             txtDown = new TextBox
             {
-                Location = new Point(160, 148),
-                Size = new Size(120, 24),
+                Location = new Point(180, 156),
+                Size = new Size(140, 24),
                 BackColor = clrInputBg,
                 ForeColor = clrTextMain,
                 Text = SelectedCustomDownChar
@@ -2730,8 +3814,16 @@ namespace NetMonitor
             card.Controls.Add(lblDown);
             card.Controls.Add(txtDown);
 
-            txtUp.TextChanged += (s, e) => { SelectedCustomUpChar = txtUp.Text; pnlLivePreview.Invalidate(); };
-            txtDown.TextChanged += (s, e) => { SelectedCustomDownChar = txtDown.Text; pnlLivePreview.Invalidate(); };
+            txtUp.TextChanged += (s, e) => {
+                SelectedCustomUpChar = txtUp.Text;
+                pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
+            };
+            txtDown.TextChanged += (s, e) => {
+                SelectedCustomDownChar = txtDown.Text;
+                pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
+            };
 
             cbTemplate.SelectedIndexChanged += (s, e) =>
             {
@@ -2750,6 +3842,7 @@ namespace NetMonitor
                 txtDown.Enabled = isCustom;
 
                 pnlLivePreview.Invalidate();
+                TriggerLiveTuning();
             };
 
             bool customInit = (cbTemplate.SelectedIndex == 5);
@@ -2765,8 +3858,8 @@ namespace NetMonitor
                     "Vector models are rendered mathematically, ensuring maximum sharpness at any DPI scale.",
                 Font = new Font("Segoe UI", 7.5f, FontStyle.Regular),
                 ForeColor = clrTextSub,
-                Location = new Point(16, 190),
-                Size = new Size(card.Width - 32, 70)
+                Location = new Point(20, 220),
+                Size = new Size(card.Width - 40, 75)
             };
             card.Controls.Add(lblNote);
         }
@@ -2777,9 +3870,16 @@ namespace NetMonitor
         private void PnlLivePreview_Paint(object sender, PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            g.Clear(Color.FromArgb(28, 28, 28));
+            Color previewBg = isDarkTheme ? NetMonitorApp.BG_COLOR_DARK : NetMonitorApp.BG_COLOR_LIGHT;
+            g.Clear(previewBg);
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            // Borda do preview
+            using (Pen p = new Pen(clrBorder, 1))
+            {
+                g.DrawRectangle(p, 0, 0, pnlLivePreview.Width - 1, pnlLivePreview.Height - 1);
+            }
 
             Color cNumUp = rbTextIndividual.Checked ? btnColorTextUp.BackColor : btnColorTextBoth.BackColor;
             Color cNumDown = rbTextIndividual.Checked ? btnColorTextDown.BackColor : btnColorTextBoth.BackColor;
@@ -2798,8 +3898,16 @@ namespace NetMonitor
             }
             else // Inherit
             {
-                cUnitUp = Color.FromArgb((int)(cNumUp.R * 0.85f), (int)(cNumUp.G * 0.85f), (int)(cNumUp.B * 0.85f));
-                cUnitDown = Color.FromArgb((int)(cNumDown.R * 0.85f), (int)(cNumDown.G * 0.85f), (int)(cNumDown.B * 0.85f));
+                if (isDarkTheme)
+                {
+                    cUnitUp = Color.FromArgb((int)(cNumUp.R * 0.85f), (int)(cNumUp.G * 0.85f), (int)(cNumUp.B * 0.85f));
+                    cUnitDown = Color.FromArgb((int)(cNumDown.R * 0.85f), (int)(cNumDown.G * 0.85f), (int)(cNumDown.B * 0.85f));
+                }
+                else
+                {
+                    cUnitUp = Color.FromArgb(Math.Min(255, (int)(cNumUp.R + 45)), Math.Min(255, (int)(cNumUp.G + 45)), Math.Min(255, (int)(cNumUp.B + 45)));
+                    cUnitDown = Color.FromArgb(Math.Min(255, (int)(cNumDown.R + 45)), Math.Min(255, (int)(cNumDown.G + 45)), Math.Min(255, (int)(cNumDown.B + 45)));
+                }
             }
 
             Color cArrUp = rbArrowIndividual.Checked ? btnColorArrowUp.BackColor : btnColorArrowBoth.BackColor;
@@ -2844,29 +3952,29 @@ namespace NetMonitor
 
                 if (SelectedArrowOnRight)
                 {
-                    RectangleF rUpNum = new RectangleF(2, 2, 48, 18);
-                    RectangleF rDnNum = new RectangleF(2, 21, 48, 18);
+                    RectangleF rUpNum = new RectangleF(2, 2, 52, 18);
+                    RectangleF rDnNum = new RectangleF(2, 21, 52, 18);
                     g.DrawString("823.6", fNum, bNumUp, rUpNum, sfR);
                     g.DrawString("142.0", fNum, bNumDown, rDnNum, sfR);
 
-                    RectangleF rUpU = new RectangleF(52, 2, 40, 18);
-                    RectangleF rDnU = new RectangleF(52, 21, 40, 18);
+                    RectangleF rUpU = new RectangleF(56, 2, 42, 18);
+                    RectangleF rDnU = new RectangleF(56, 21, 42, 18);
                     g.DrawString(unitStr, fUnit, bUnitUp, rUpU, sfL);
                     g.DrawString(unitStr, fUnit, bUnitDown, rDnU, sfL);
 
-                    DrawPreviewArrow(g, 100.0f, bArrUp, bArrDown, pArrUp, pArrDown, fUni, sfC);
+                    DrawPreviewArrow(g, 106.0f, bArrUp, bArrDown, pArrUp, pArrDown, fUni, sfC);
                 }
                 else
                 {
                     DrawPreviewArrow(g, 10.0f, bArrUp, bArrDown, pArrUp, pArrDown, fUni, sfC);
 
-                    RectangleF rUpNum = new RectangleF(20, 2, 44, 18);
-                    RectangleF rDnNum = new RectangleF(20, 21, 44, 18);
+                    RectangleF rUpNum = new RectangleF(20, 2, 48, 18);
+                    RectangleF rDnNum = new RectangleF(20, 21, 48, 18);
                     g.DrawString("823.6", fNum, bNumUp, rUpNum, sfR);
                     g.DrawString("142.0", fNum, bNumDown, rDnNum, sfR);
 
-                    RectangleF rUpU = new RectangleF(66, 2, 42, 18);
-                    RectangleF rDnU = new RectangleF(66, 21, 42, 18);
+                    RectangleF rUpU = new RectangleF(70, 2, 44, 18);
+                    RectangleF rDnU = new RectangleF(70, 21, 44, 18);
                     g.DrawString(unitStr, fUnit, bUnitUp, rUpU, sfL);
                     g.DrawString(unitStr, fUnit, bUnitDown, rDnU, sfL);
                 }
@@ -2923,12 +4031,12 @@ namespace NetMonitor
         // ==============================================================================
         // HELPERS DE CRIAÇÃO VISUAL
         // ==============================================================================
-        private Panel CreateCard(Panel parent, int top, int height)
+        private Panel CreateCard(Panel parent, int left, int top, int width, int height)
         {
             Panel card = new Panel
             {
-                Location = new Point(0, top),
-                Size = new Size(parent.Width, height),
+                Location = new Point(left, top),
+                Size = new Size(width, height),
                 BackColor = clrCardBg
             };
             card.Paint += (s, e) =>
@@ -2971,6 +4079,16 @@ namespace NetMonitor
             return cb;
         }
 
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            try
+            {
+                SystemEvents.UserPreferenceChanged -= OnThemeChanged;
+            }
+            catch { }
+            base.OnFormClosing(e);
+        }
+
         private void BtnSave_Click(object sender, EventArgs e)
         {
             this.DialogResult = DialogResult.OK;
@@ -2984,6 +4102,8 @@ namespace NetMonitor
             SelectedArrowOnRight = rbRight.Checked;
             SelectedIsLocked = chkLock.Checked;
             SelectedHideOnScreensaver = chkScreensaver.Checked;
+            SelectedShowHoverFlyout = chkHoverFlyout.Checked;
+            parentApp.showHoverFlyout = SelectedShowHoverFlyout;
 
             SelectedFontFamily = cbFontFamily.SelectedItem != null ? cbFontFamily.SelectedItem.ToString() : "Segoe UI Variable Display";
 
