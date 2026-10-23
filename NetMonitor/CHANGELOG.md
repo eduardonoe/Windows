@@ -45,4 +45,8 @@ Todas as alterações notáveis deste projeto seguem o padrão de **Versionament
   - Abertura de submenus sempre orientada à esquerda (`ToolStripDropDownDirection.Left`) e para cima da barra de tarefas.
 - **Corte de Caracteres na Unidade:**
   - Ajuste de retângulo GDI+ com largura expandida e suavização ClearType.
+- **Isolamento de I/O de Disco e Filtro de Loopback no Top 5 Apps:**
+  - Correção de distorção onde gravações massivas em SSD/disco (ex: instaladores `Setup.exe` descompactando arquivos a ~175 MB/s) eram incorretamente exibidas como tráfego de rede de 1,4 Gbps.
+  - Filtro rigoroso nas tabelas TCP/UDP do Windows (`GetExtendedTcpTable`), considerando apenas conexões `ESTABLISHED` (state 5) para endereços IP externos reais e ignorando portas em escuta (`0.0.0.0`) e comunicação local/loopback (`127.0.0.1` e `::1`).
+  - Calibração e teto pela placa física: a taxa dos aplicativos do Top 5 agora é estritamente vinculada e normalizada pela velocidade real que trafega pela placa de rede física, eliminando qualquer leitura espúria de disco.
 

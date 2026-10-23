@@ -13,6 +13,7 @@ Monitor de tráfego de rede ultraleve para a barra de tarefas do **Windows 11**,
 - **Card Flutuante (Flyout) do Top 5 Programas ao Passar o Mouse (Hover):**
   - Design moderno com cantos arredondados DWM e sombra suave.
   - Tráfego de rede agrupado de forma inteligente por **aplicativo/software** (soma dados de múltiplos subprocessos e workers, ex: Antigravity IDE, Dropbox, Chrome, Sync).
+  - **Isolamento de Disco e Filtro Estrito:** Considera apenas conexões TCP ativas externas (`ESTABLISHED`), descartando portas em escuta, conexões locais (`127.0.0.1`) e delimitando a taxa pela velocidade real da placa física.
 - **Tema Nativo Fluente (Dark / Light):**
   - Menus e janelas que respeitam o tema do sistema operacional, com renderização escura elegante (`#202020`), hover suave e checkmarks em azul fluente.
 - **Suporte Bilingue Nativo (Português / Inglês):**

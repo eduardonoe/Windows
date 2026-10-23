@@ -324,6 +324,7 @@ namespace NetMonitor
         private long lastBytesIn = -1;
         private long lastBytesOut = -1;
         private DateTime lastMeasurementTime = DateTime.MinValue;
+        private double latestPhysicalSpeedBytesPerSec = 0;
 
         // Valores de exibição atuais
         private string strUpNum = "0.0";
@@ -1310,6 +1311,7 @@ namespace NetMonitor
 
                         double bitsInPerSec = (diffIn * 8.0) / elapsed;
                         double bitsOutPerSec = (diffOut * 8.0) / elapsed;
+                        latestPhysicalSpeedBytesPerSec = (diffIn + diffOut) / elapsed;
 
                         string newUpNum, newUpUnit, newDownNum, newDownUnit;
                         FormatSpeed(bitsOutPerSec, out newUpNum, out newUpUnit);
@@ -2120,7 +2122,22 @@ namespace NetMonitor
             try
             {
                 HashSet<int> activePids = GetActiveNetworkPids();
-                if (activePids.Count == 0) return;
+                if (activePids.Count == 0)
+                {
+                    if (flyoutForm != null && flyoutForm.Visible && flyoutForm.IsHandleCreated)
+                    {
+                        flyoutForm.BeginInvoke((MethodInvoker)delegate
+                        {
+                            if (flyoutForm != null && flyoutForm.Visible)
+                            {
+                                flyoutForm.UpdateItems(new List<ProcessTrafficItem>());
+                            }
+                        });
+                    }
+                    return;
+                }
+
+                double physSpeed = latestPhysicalSpeedBytesPerSec;
 
                 // Agrupamento por software/aplicativo (soma tráfego de múltiplos workers e instâncias)
                 Dictionary<string, ulong> appTraffic = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
@@ -2145,16 +2162,29 @@ namespace NetMonitor
                                         ulong delta = total - last;
                                         if (delta > 0)
                                         {
-                                            string baseName = GetProcessName(pid);
-                                            if (baseName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                                                baseName = baseName.Substring(0, baseName.Length - 4);
-
-                                            if (!appTraffic.ContainsKey(baseName))
+                                            // Isolamento estrito de I/O de disco:
+                                            // Um processo individual nunca pode transferir mais dados de rede do que
+                                            // a taxa física real medida na placa de rede.
+                                            // Qualquer excesso massivo de I/O é gravação/leitura de disco local (SSD/HD) e é descartado.
+                                            ulong maxAllowed = (ulong)(physSpeed * 1.20) + 4096;
+                                            if (delta > maxAllowed)
                                             {
-                                                appTraffic[baseName] = 0;
-                                                appPrimaryPid[baseName] = pid;
+                                                delta = (physSpeed > 100) ? (ulong)physSpeed : 0;
                                             }
-                                            appTraffic[baseName] += delta;
+
+                                            if (delta > 0)
+                                            {
+                                                string baseName = GetProcessName(pid);
+                                                if (baseName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                                                    baseName = baseName.Substring(0, baseName.Length - 4);
+
+                                                if (!appTraffic.ContainsKey(baseName))
+                                                {
+                                                    appTraffic[baseName] = 0;
+                                                    appPrimaryPid[baseName] = pid;
+                                                }
+                                                appTraffic[baseName] += delta;
+                                            }
                                         }
                                     }
                                 }
@@ -2179,9 +2209,26 @@ namespace NetMonitor
                     for (int i = 0; i < toRemove.Count; i++) lastProcessIo.Remove(toRemove[i]);
                 }
 
+                // Normalização coletiva: a soma de todos os apps nunca deve ultrapassar a banda física real da placa
+                ulong totalAppBytes = 0;
+                foreach (var v in appTraffic.Values) totalAppBytes += v;
+
+                ulong maxTotalAllowed = (ulong)(physSpeed * 1.25) + 8192;
+                if (totalAppBytes > maxTotalAllowed && totalAppBytes > 0 && physSpeed > 0)
+                {
+                    double scale = physSpeed / (double)totalAppBytes;
+                    List<string> keys = new List<string>(appTraffic.Keys);
+                    foreach (var k in keys)
+                    {
+                        appTraffic[k] = (ulong)(appTraffic[k] * scale);
+                    }
+                }
+
                 List<ProcessTrafficItem> groupedItems = new List<ProcessTrafficItem>();
                 foreach (var kvp in appTraffic)
                 {
+                    if (kvp.Value == 0 && physSpeed > 500) continue;
+
                     groupedItems.Add(new ProcessTrafficItem
                     {
                         Pid = appPrimaryPid[kvp.Key],
@@ -2218,7 +2265,7 @@ namespace NetMonitor
         {
             HashSet<int> pids = new HashSet<int>();
 
-            // 1. TCP IPv4
+            // 1. TCP IPv4 - Filtro rigoroso: apenas conexões ESTABLISHED (state == 5) para IPs externos reais
             int size = 0;
             GetExtendedTcpTable(IntPtr.Zero, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
             if (size > 0)
@@ -2234,7 +2281,20 @@ namespace NetMonitor
                         for (int i = 0; i < count; i++)
                         {
                             MIB_TCPROW_OWNER_PID row = (MIB_TCPROW_OWNER_PID)Marshal.PtrToStructure(rowPtr, typeof(MIB_TCPROW_OWNER_PID));
-                            if (row.owningPid > 4) pids.Add(row.owningPid);
+                            // state == 5 (MIB_TCP_STATE_ESTAB)
+                            if (row.owningPid > 4 && row.state == 5)
+                            {
+                                uint rem = row.remoteAddr;
+                                uint loc = row.localAddr;
+                                byte remFirst = (byte)(rem & 0xFF);
+                                byte locFirst = (byte)(loc & 0xFF);
+
+                                // Ignora 0.0.0.0 e loopback 127.x.x.x
+                                if (rem != 0 && remFirst != 127 && locFirst != 127)
+                                {
+                                    pids.Add(row.owningPid);
+                                }
+                            }
                             rowPtr = (IntPtr)((long)rowPtr + rowSize);
                         }
                     }
@@ -2242,7 +2302,7 @@ namespace NetMonitor
                 finally { Marshal.FreeHGlobal(buf); }
             }
 
-            // 2. TCP IPv6
+            // 2. TCP IPv6 - Filtro rigoroso: apenas conexões ESTABLISHED (state == 5) para IPs externos reais
             size = 0;
             GetExtendedTcpTable(IntPtr.Zero, ref size, false, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 0);
             if (size > 0)
@@ -2258,7 +2318,26 @@ namespace NetMonitor
                         for (int i = 0; i < count; i++)
                         {
                             MIB_TCP6ROW_OWNER_PID row = (MIB_TCP6ROW_OWNER_PID)Marshal.PtrToStructure(rowPtr, typeof(MIB_TCP6ROW_OWNER_PID));
-                            if (row.owningPid > 4) pids.Add(row.owningPid);
+                            if (row.owningPid > 4 && row.state == 5 && row.ucRemoteAddr != null && row.ucRemoteAddr.Length == 16)
+                            {
+                                bool isZero = true;
+                                for (int b = 0; b < 16; b++) { if (row.ucRemoteAddr[b] != 0) { isZero = false; break; } }
+
+                                if (!isZero)
+                                {
+                                    // Verifica se é loopback ::1
+                                    bool isLoopback6 = true;
+                                    for (int b = 0; b < 15; b++) { if (row.ucRemoteAddr[b] != 0) { isLoopback6 = false; break; } }
+                                    if (!(isLoopback6 && row.ucRemoteAddr[15] == 1))
+                                    {
+                                        // Verifica link-local fe80::
+                                        if (!(row.ucRemoteAddr[0] == 0xFE && (row.ucRemoteAddr[1] & 0xC0) == 0x80))
+                                        {
+                                            pids.Add(row.owningPid);
+                                        }
+                                    }
+                                }
+                            }
                             rowPtr = (IntPtr)((long)rowPtr + rowSize);
                         }
                     }
@@ -2266,7 +2345,7 @@ namespace NetMonitor
                 finally { Marshal.FreeHGlobal(buf); }
             }
 
-            // 3. UDP IPv4
+            // 3. UDP IPv4 - Filtra loopback
             size = 0;
             GetExtendedUdpTable(IntPtr.Zero, ref size, false, AF_INET, UDP_TABLE_OWNER_PID, 0);
             if (size > 0)
@@ -2282,7 +2361,14 @@ namespace NetMonitor
                         for (int i = 0; i < count; i++)
                         {
                             MIB_UDPROW_OWNER_PID row = (MIB_UDPROW_OWNER_PID)Marshal.PtrToStructure(rowPtr, typeof(MIB_UDPROW_OWNER_PID));
-                            if (row.owningPid > 4) pids.Add(row.owningPid);
+                            if (row.owningPid > 4)
+                            {
+                                byte locFirst = (byte)(row.localAddr & 0xFF);
+                                if (row.localAddr != 0 && locFirst != 127)
+                                {
+                                    pids.Add(row.owningPid);
+                                }
+                            }
                             rowPtr = (IntPtr)((long)rowPtr + rowSize);
                         }
                     }
@@ -2290,7 +2376,7 @@ namespace NetMonitor
                 finally { Marshal.FreeHGlobal(buf); }
             }
 
-            // 4. UDP IPv6
+            // 4. UDP IPv6 - Filtra loopback
             size = 0;
             GetExtendedUdpTable(IntPtr.Zero, ref size, false, AF_INET6, UDP_TABLE_OWNER_PID, 0);
             if (size > 0)
@@ -2306,7 +2392,15 @@ namespace NetMonitor
                         for (int i = 0; i < count; i++)
                         {
                             MIB_UDP6ROW_OWNER_PID row = (MIB_UDP6ROW_OWNER_PID)Marshal.PtrToStructure(rowPtr, typeof(MIB_UDP6ROW_OWNER_PID));
-                            if (row.owningPid > 4) pids.Add(row.owningPid);
+                            if (row.owningPid > 4 && row.ucLocalAddr != null && row.ucLocalAddr.Length == 16)
+                            {
+                                bool isLoopback6 = true;
+                                for (int b = 0; b < 15; b++) { if (row.ucLocalAddr[b] != 0) { isLoopback6 = false; break; } }
+                                if (!(isLoopback6 && row.ucLocalAddr[15] == 1))
+                                {
+                                    pids.Add(row.owningPid);
+                                }
+                            }
                             rowPtr = (IntPtr)((long)rowPtr + rowSize);
                         }
                     }

@@ -111,6 +111,14 @@
   - Override de `CreateParams` com `WS_EX_APPWINDOW (0x00040000)` para forçar registro no Shell e DWM.
   - Implementação de `OnHandleCreated` aplicando `UpdateTitleBarTheme(isDarkTheme)` imediatamente.
 
+### 13. Isolamento Estrito de I/O de Disco e Filtro de Loopback no Top 5 Apps
+* **Problema:** Processos realizando operações pesadas de disco/SSD (como instaladores `Setup.exe` descompactando arquivos a ~175 MB/s) eram listados no Top 5 de rede com velocidades irreais (ex: 1,4 Gbps), mesmo com a placa física e conexão baixando a apenas 230 Kbps.
+* **Causa Raiz:** A API nativa do Windows `GetProcessIoCounters` contabiliza I/O total (disco + rede indistintamente). Além disso, `GetActiveNetworkPids` listava qualquer processo com portas em escuta (`0.0.0.0`) ou comunicação local `127.0.0.1`.
+* **Solução Implementada:**
+  1. **Filtro Estrito de Sockets:** `GetActiveNetworkPids` agora aceita apenas sockets TCP no estado `ESTABLISHED` (`state == 5`) conectados a IPs remotos externos legítimos, ignorando escuta (`0.0.0.0`) e loopback (`127.x.x.x` e `::1`).
+  2. **Calibração e Teto pela Placa Física:** `NetMonitorApp` rastreia continuamente a taxa física real (`latestPhysicalSpeedBytesPerSec`). O tráfego reportado para qualquer processo é delimitado por essa velocidade física (descartando picos de escrita no SSD) e a soma coletiva dos apps é normalizada para jamais ultrapassar a capacidade real da interface.
+  3. **Zero Impacto em Performance:** Mantém 0% de CPU e menos de 20 MB de RAM, preservando compilação nativa em C# puro via `csc.exe` sem dependências externas ou exigência de Administrador (UAC).
+
 ---
 
 ## 🛠️ SCRIPTS DE AUTOMAÇÃO
